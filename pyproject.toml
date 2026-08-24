@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "safe_interactive_av"
+version = "0.1.0"
+description = "Safe Interactive Artificial Intelligence for Safe Autonomous Driving"
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.0.0",
+    "numpy",
+    "scipy",
+    "matplotlib",
+    "commonroad-io",
+    "commonroad-drivability-checker",
+    "pydantic>=2.0.0",
+    "pyyaml"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ruff",
+    "pre-commit"
+]
