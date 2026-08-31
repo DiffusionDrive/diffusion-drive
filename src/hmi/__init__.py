@@ -1,8 +1,9 @@
-#https://www.youtube.com/watch?v=POwi9Don3pE
-#test for successful Kivy installation
+# https://www.youtube.com/watch?v=POwi9Don3pE
+# test for successful Kivy installation
 
 from kivy.app import App
 from kivy.uix.button import Button
+
 
 class MyApp(App):
     def build(self):
@@ -10,6 +11,7 @@ class MyApp(App):
 
     def on_button_click(self, instance):
         instance.text = "Clicked!"
+
 
 if __name__ == "__main__":
     MyApp().run()
