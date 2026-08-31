@@ -2,6 +2,7 @@ import torch
 import numpy as np
 from src.core.types import PlannerInput
 from commonroad.scenario.obstacle import ObstacleType
+from commonroad_route_planner.route_planner import RoutePlanner
 
 
 def resample_polyline(polyline: np.ndarray, num_points: int = 20) -> np.ndarray:
@@ -171,32 +172,24 @@ def extract_static_objects(scenario, max_static=5):
 def extract_navigation_route(
     scenario, planning_problem, max_route_lanes=25, points_per_lane=20
 ):
-    """Builds a route using a lightweight forward-search, bypassing broken dependencies."""
+    """Calculates the shortest path to the goal using the official CommonRoad A* RoutePlanner."""
     route_tensor = np.zeros((max_route_lanes, points_per_lane, 4), dtype=np.float32)
 
-    # 1. Find the starting lanelet based on Ego's initial position
-    start_pos = planning_problem.initial_state.position
-    start_lanelets = scenario.lanelet_network.find_lanelet_by_position([start_pos])[0]
+    # 1. Use CommonRoad's built-in A* search to find the route
+    route_planner = RoutePlanner(scenario, planning_problem)
+    candidate_routes = route_planner.plan_routes()
 
-    if not start_lanelets:
-        print("Warning: Ego vehicle is not on a lanelet! Returning empty route.")
+    if len(candidate_routes.retrieve_all_routes()) == 0:
+        print("Warning: No route found to the goal! Returning empty route tensor.")
         return route_tensor
 
-    # 2. Simple greedy route builder (traces forward successors)
-    route_lanelet_ids = [start_lanelets[0]]
-    current_id = route_lanelet_ids[0]
-
-    for _ in range(max_route_lanes - 1):
-        let = scenario.lanelet_network.find_lanelet_by_id(current_id)
-        if let.successor:
-            current_id = let.successor[0]  # Take the main forward path
-            route_lanelet_ids.append(current_id)
-        else:
-            break  # End of the road
+    # Get the best route
+    route = candidate_routes.retrieve_first_route()
+    route_lanelet_ids = route.list_ids_lanelets
 
     num_lanes = min(len(route_lanelet_ids), max_route_lanes)
 
-    # 3. Extract and format the lanelets in the route sequence
+    # 2. Extract and format the lanelets in the route sequence
     for i in range(num_lanes):
         l_id = route_lanelet_ids[i]
         let = scenario.lanelet_network.find_lanelet_by_id(l_id)
