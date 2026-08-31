@@ -97,28 +97,58 @@ class DiffusionPlannerNode:
 if __name__ == "__main__":
     import numpy as np
     import os
+    from commonroad.common.file_reader import CommonRoadFileReader
 
-    print("Initializing Smoke Test...")
-
-    # Automatically resolve the EE4002D root folder (2 levels up from inference.py)
-    ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
-    ckpt_path = os.path.join(ROOT_DIR, "checkpoints", "model.pth")
-
-    # 1. Instantiate the planner node with the absolute path
-    planner = DiffusionPlannerNode(checkpoint_path=ckpt_path, device="cpu")
-
-    # 2. Create mock data matching the exact shapes defined in src/core/types.py
-    mock_input = PlannerInput(
-        ego_current_state=np.zeros(4),
-        neighbors_history=np.zeros((32, 21, 11)),
-        lane_polylines=np.zeros((70, 20, 12)),
-        lanes_speed_limit=np.zeros((70, 1)),
-        lanes_has_speed_limit=np.zeros((70, 1), dtype=bool),
-        static_objects=np.zeros((5, 10)),
-        navigation_route=np.zeros((25, 20, 4)),
+    # Import the new adapters
+    from src.planner.adapter import (
+        extract_map_tensors,
+        extract_neighbor_tensors,
+        extract_ego_state,
+        extract_static_objects,
+        extract_navigation_route,
     )
 
-    # 3. Run the inference pipeline
-    output_trajectory = planner.plan(mock_input)
+    print("Initializing Full Integration Test...")
 
-    print(f"Success! Mock Output Ego Shape: {output_trajectory.ego_states.shape}")
+    # 1. Instantiate the planner node
+    ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+    ckpt_path = os.path.join(ROOT_DIR, "checkpoints", "model.pth")
+    planner = DiffusionPlannerNode(checkpoint_path=ckpt_path, device="cpu")
+
+    # 2. Load the CommonRoad Scenario
+    file_path = os.path.join(
+        ROOT_DIR, "data", "scenarios", "DEU_Flensburg-41_1_T-1.xml"
+    )
+    scenario, planning_problem_set = CommonRoadFileReader(file_path).open()
+    ego_id = list(planning_problem_set.planning_problem_dict.keys())[0]
+    planning_problem = planning_problem_set.planning_problem_dict[ego_id]
+
+    # 3. Extract Live Tensors
+    print("Extracting live tensors from scenario...")
+    polylines, speed_limit, has_speed = extract_map_tensors(scenario)
+    neighbors = extract_neighbor_tensors(scenario, current_time_step=0)
+    ego_state = extract_ego_state(planning_problem, current_time_step=0)
+    static_objs = extract_static_objects(scenario)
+    nav_route = extract_navigation_route(scenario, planning_problem)
+
+    # 4. Pack into PlannerInput contract
+    live_input = PlannerInput(
+        ego_current_state=ego_state,
+        neighbors_history=neighbors,
+        lane_polylines=polylines,
+        lanes_speed_limit=speed_limit,
+        lanes_has_speed_limit=has_speed,
+        static_objects=static_objs,
+        navigation_route=nav_route,
+    )
+
+    # 5. Run the Neural Network
+    print("Running Diffusion Planner forward pass...")
+    output_trajectory = planner.plan(live_input)
+
+    print(
+        f"✅ Success! Generated Ego Trajectory Shape: {output_trajectory.ego_states.shape}"
+    )
+    print(
+        f"First 3 future waypoints (x, y, cos, sin):\n{np.round(output_trajectory.ego_states[:3], 2)}"
+    )
