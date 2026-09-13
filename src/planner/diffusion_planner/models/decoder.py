@@ -2,11 +2,18 @@ import torch
 import torch.nn as nn
 from timm.layers import Mlp
 
-from src.planner.diffusion_utils.sampling import dpm_sampler
-from src.planner.diffusion_utils.sde import SDE, VPSDE_linear
-from src.planner.normalizer import ObservationNormalizer, StateNormalizer
-from src.planner.models.mixer import MixerBlock
-from src.planner.models.dit import TimestepEmbedder, DiTBlock, FinalLayer
+from src.planner.diffusion_planner.diffusion_utils.sampling import dpm_sampler
+from src.planner.diffusion_planner.diffusion_utils.sde import SDE, VPSDE_linear
+from src.planner.diffusion_planner.normalizer import (
+    ObservationNormalizer,
+    StateNormalizer,
+)
+from src.planner.diffusion_planner.models.mixer import MixerBlock
+from src.planner.diffusion_planner.models.dit import (
+    TimestepEmbedder,
+    DiTBlock,
+    FinalLayer,
+)
 
 
 class Decoder(nn.Module):

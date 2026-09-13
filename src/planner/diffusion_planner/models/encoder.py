@@ -3,7 +3,7 @@ import torch.nn as nn
 from timm.layers import Mlp
 from timm.layers import DropPath
 
-from src.planner.models.mixer import MixerBlock
+from src.planner.diffusion_planner.models.mixer import MixerBlock
 
 
 class Encoder(nn.Module):

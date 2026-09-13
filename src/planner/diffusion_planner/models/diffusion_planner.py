@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
 
-from src.planner.models.encoder import Encoder
-from src.planner.models.decoder import Decoder
+from src.planner.diffusion_planner.models.encoder import Encoder
+from src.planner.diffusion_planner.models.decoder import Decoder
 
 
 class Diffusion_Planner(nn.Module):
