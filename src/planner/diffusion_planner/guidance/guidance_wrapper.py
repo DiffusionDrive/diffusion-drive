@@ -1,7 +1,7 @@
 import torch
 
-from src.planner.diffusion_utils.sde import VPSDE_linear
-from src.planner.guidance.collision import collision_guidance_fn
+from src.planner.diffusion_planner.diffusion_utils.sde import VPSDE_linear
+from src.planner.diffusion_planner.guidance.collision import collision_guidance_fn
 
 N = 1
 sde = VPSDE_linear()

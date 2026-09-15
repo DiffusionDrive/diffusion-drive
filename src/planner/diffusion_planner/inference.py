@@ -2,9 +2,12 @@ import torch
 from dataclasses import dataclass
 from typing import Any, Optional
 from src.core.types import PlannerInput, Trajectory
-from src.planner.adapter import map_input_to_tensors
-from src.planner.normalizer import ObservationNormalizer, StateNormalizer
-from src.planner.models.diffusion_planner import Diffusion_Planner
+from src.planner.diffusion_planner.adapter import map_input_to_tensors
+from src.planner.diffusion_planner.normalizer import (
+    ObservationNormalizer,
+    StateNormalizer,
+)
+from src.planner.diffusion_planner.models.diffusion_planner import Diffusion_Planner
 
 
 @dataclass

@@ -1,6 +1,6 @@
 from typing import Dict
 import torch
-import src.planner.diffusion_utils.dpm_solver_pytorch as dpm
+import src.planner.diffusion_planner.diffusion_utils.dpm_solver_pytorch as dpm
 
 
 def dpm_sampler(
