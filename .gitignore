@@ -222,6 +222,7 @@ __marimo__/
 *.pth
 *.onnx
 *.bin
+*.ckpt
 checkpoints/
 pretrained_models/
 
