@@ -32,6 +32,9 @@ dependencies = [
     "jinja2==3.1.6",
     "joblib==1.6.0",
     "jsonschema==4.26.0",
+    "kivy==2.3.1",                 #For HMI
+    "kivy-garden==0.1.5",          #For HMI
+    "kivymd==2.0.1.dev0",          #For HMI
     "kiwisolver==1.5.0",
     "lxml==6.1.2",
     "markupsafe==3.0.3",
@@ -50,6 +53,7 @@ dependencies = [
     "polygon3==3.0.9.1",
     "positional-encodings==6.0.3",
     "protobuf==3.20.2",
+    "pycairo==1.29.1",             #For HMI
     "pydantic==2.13.4",
     "pyparsing==3.3.2",
     "pyyaml==6.0.3",

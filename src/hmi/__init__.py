@@ -1,17 +1,13 @@
-# https://www.youtube.com/watch?v=POwi9Don3pE
-# test for successful Kivy installation
+# https://kivymd.readthedocs.io/en/latest/getting-started/
+# test for successful KivyMD installation
 
-from kivy.app import App
-from kivy.uix.button import Button
+from kivymd.app import MDApp
+from kivymd.uix.label import MDLabel
 
 
-class MyApp(App):
+class MainApp(MDApp):
     def build(self):
-        return Button(text="Click Me!", on_press=self.on_button_click)
-
-    def on_button_click(self, instance):
-        instance.text = "Clicked!"
+        return MDLabel(text="Hello, World", halign="center")
 
 
-if __name__ == "__main__":
-    MyApp().run()
+MainApp().run()
