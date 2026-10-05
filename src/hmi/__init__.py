@@ -10,7 +10,7 @@
 from kivymd.app import MDApp
 from kivy.lang import Builder
 from kivy.core.window import Window
-from kivy_garden.mapview import MapView, MapMarker
+from kivy_garden.mapview import MapView, MapMarker, MapMarkerPopup, MarkerMapLayer
 
 Window.size = (375,750)
 
