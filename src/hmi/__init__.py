@@ -10,12 +10,15 @@
 from kivymd.app import MDApp
 from kivy.lang import Builder
 from kivy.uix.floatlayout import FloatLayout
-from kivy_garden.mapview import MapView
+from kivy_garden.mapview import MapView, MapMarker
 
 class LayoutMapView(FloatLayout):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
+        self.map = self.ids.map
+        self.map.add_widget(MapMarker(lat = 1.296, lon = 103.776))
+        
 class MainApp(MDApp):
     def build(self):
         Builder.load_file("layout.kv")
