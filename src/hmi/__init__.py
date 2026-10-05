@@ -9,8 +9,10 @@
 
 # <a href="https://www.flaticon.com/free-icons/location" title="location icons">Location icons created by MEDZ - Flaticon</a>
 
+from kivy import utils
 from kivymd.app import MDApp
 from kivy.lang import Builder
+from kivy.utils import get_color_from_hex
 from kivy.core.window import Window
 from kivy_garden.mapview import MapView, MapMarker, MapMarkerPopup, MarkerMapLayer, MapSource
 
@@ -18,7 +20,11 @@ from kivymd.uix.label import MDLabel
 from kivymd.uix.screen import MDScreen
 from kivymd.uix.screenmanager import MDScreenManager
 from kivymd.uix.widget import MDWidget
-from kivymd.uix.button import MDButton
+from kivymd.uix.button import MDButton, MDButtonText
+
+from kivy.animation import Animation
+from kivymd.uix.hero import MDHeroFrom, MDHeroTo
+from kivymd.uix.relativelayout import MDRelativeLayout
 
 Window.size = (375,667)
 
@@ -26,5 +32,33 @@ class MainApp(MDApp):
     def build(self):
         self.screen = Builder.load_file("layout.kv")
         return self.screen
+
+class MyHero(MDHeroFrom):
+    def on_transform_in(
+        self, instance_hero_widget: MDRelativeLayout, duration: float
+    ):
+        '''
+        Fired when the hero flies from screen **A** to screen **B**.
+        
+        :param instance_hero_widget: child widget of the 'MDHeroFrom' class.
+        :param duration of the transition animation between screens.
+        '''
+
+        Animation(
+            radius=[12, 24, 12, 24],
+            duration=duration,
+            md_bg_color=(0, 1, 1, 1),
+        ).start(instance_hero_widget)
+
+    def on_transform_out(
+        self, instance_hero_widget: MDRelativeLayout, duration: float
+    ):
+        '''Fired when the hero back from screen **B** to screen **A**.'''
+
+        Animation(
+            radius=[24, 12, 24, 12],
+            duration=duration,
+            md_bg_color=get_color_from_hex(utils.hex_colormap["blue"]),
+        ).start(instance_hero_widget)
 
 MainApp().run()

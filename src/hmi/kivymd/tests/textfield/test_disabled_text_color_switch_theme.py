@@ -1,0 +1,72 @@
+"""
+Test that MDTextField updates disabled colors correctly after switching
+the application theme.
+
+The test creates a disabled MDTextField with all supported subcomponents,
+changes the theme style to Dark, and verifies that the disabled colors
+of hint text, helper text, leading and trailing icons, and maximum
+length text are updated to match the current theme.
+"""
+
+from kivy.clock import Clock
+from kivy.lang import Builder
+
+from kivymd.app import MDApp
+
+KV = """
+MDScreen:
+    md_bg_color: self.theme_cls.backgroundColor
+    on_touch_down: field.disabled = not field.disabled
+
+    MDTextField:
+        id: field
+        pos_hint: {"center_x": .5, "center_y": .5}
+        size_hint_x: .6
+        disabled: True
+
+        MDTextFieldLeadingIcon:
+            icon: "account"
+
+        MDTextFieldHintText:
+            text: "Hint text"
+
+        MDTextFieldHelperText:
+            text: "Helper text"
+            mode: "persistent"
+
+        MDTextFieldTrailingIcon:
+            icon: "information"
+
+        MDTextFieldMaxLengthText:
+            max_text_length: 10
+"""
+
+
+class TestDisabledTextColorSwitchTheme(MDApp):
+    def build(self):
+        return Builder.load_string(KV)
+
+    def check_colors(self, *args):
+        for group_name in [
+            "helper-text-color",
+            "leading-icons-color",
+            "trailing-icons-color",
+            "max-length-color",
+        ]:
+            group = self.root.ids.field.canvas.before.get_group(group_name)[0]
+            assert group.rgba, self.theme_cls.disabledTextColor[:-1] + [0.60]
+
+        group = self.root.ids.field.canvas.after.get_group("hint-text-color")[0]
+        assert group.rgba == self.theme_cls.disabledTextColor[:-1] + [0.60]
+        self.stop()
+
+    def change_theme(self, *args):
+        self.theme_cls.theme_style = "Dark"
+        Clock.schedule_once(self.check_colors, 3)
+
+    def on_start(self):
+        Clock.schedule_once(self.change_theme, 2)
+
+
+if __name__ == "__main__":
+    TestDisabledTextColorSwitchTheme().run()
