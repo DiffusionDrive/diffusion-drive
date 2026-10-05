@@ -1,4 +1,5 @@
 #: import MapSource kivy_garden.mapview.MapSource
+#: import MDTextField kivymd.uix.textfield.textfield.MDTextField
 #: import MDSearchBar kivymd.uix.search.search.MDSearchBar
 
 MDRelativeLayout:
@@ -19,4 +20,9 @@ MDRelativeLayout:
                         text: "You in here"
                         markup: True
                         halign: "center"
-        
+
+    MDTextField:
+        mode: "filled"
+
+        MDTextFieldLeadingIcon:
+            icon: "magnify"
