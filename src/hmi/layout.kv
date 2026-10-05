@@ -1,8 +1,21 @@
-#: import MapView kivy_garden.mapview.MapView
-<LayoutMapView>:
+#: import MapSource kivy_garden.mapview.MapSource
+
+MDRelativeLayout:
     MapView:
-        id: map
         lat: 1.296
         lon: 103.776
-        zoom: 17
+        zoom: 16
 
+        MapMarkerPopup:
+            lat:1.296
+            lon: 103.776
+
+            popup_size:dp(230),dp(130)
+            Bubble:
+                MDBoxLayout:
+                    padding: "4dp"
+                    MDLabel:
+                        text: "You in here"
+                        markup: True
+                        halign: "center"
+        
