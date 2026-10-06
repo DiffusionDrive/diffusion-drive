@@ -45,6 +45,7 @@ class MainApp(MDApp):
         self.root.ids.drop_text.text = text_item
 
     def build(self):
+            self.theme_cls.theme_style = "Dark"
             self.screen = Builder.load_file("wheretogo.kv")
             return self.screen
 
