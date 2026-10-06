@@ -1,6 +1,7 @@
 #: import MapSource kivy_garden.mapview.MapSource
 #: import MDTextField kivymd.uix.textfield.textfield.MDTextField
 #: import MDSearchBar kivymd.uix.search.search.MDSearchBar
+#: import MDDropdownMenu kivymd.uix.menu.MDDropdownMenu
 
 MDRelativeLayout:
     MapView:
@@ -26,3 +27,11 @@ MDRelativeLayout:
 
         MDTextFieldLeadingIcon:
             icon: "magnify"
+
+    MDDropDownItem:
+        pos_hint: {"center_x": .5, "center_y": .5}
+        on_release: app.open_menu(self)
+
+        MDDropDownItemText:
+            id: drop_text
+            text: "Item"

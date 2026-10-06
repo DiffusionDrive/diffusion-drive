@@ -26,9 +26,23 @@ from kivy.animation import Animation
 from kivymd.uix.hero import MDHeroFrom, MDHeroTo
 from kivymd.uix.relativelayout import MDRelativeLayout
 
+from kivymd.uix.menu import MDDropdownMenu
+
 Window.size = (375,667)
 
 class MainApp(MDApp):
+    def open_menu(self, item):
+        menu_items = [
+            {
+                "text": f"{i}",
+                "on_release": lambda x=f"Item {i}": self.menu_callback(x),
+            } for i in range(5)
+        ]
+        MDDropdownMenu(caller=item, items=menu_items).open()
+
+    def menu_callback(self, text_item):
+        self.root.ids.drop_text.text = text_item
+
     def build(self):
         self.screen = Builder.load_file("layout.kv")
         return self.screen
