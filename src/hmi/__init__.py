@@ -19,6 +19,7 @@ from kivy_garden.mapview import MapView, MapMarker, MapMarkerPopup, MarkerMapLay
 from kivymd.uix.label import MDLabel
 from kivymd.uix.screen import MDScreen
 from kivymd.uix.screenmanager import MDScreenManager
+from kivymd.uix.screen import MDScreen
 from kivymd.uix.widget import MDWidget
 from kivymd.uix.button import MDButton, MDButtonText
 
@@ -44,8 +45,8 @@ class MainApp(MDApp):
         self.root.ids.drop_text.text = text_item
 
     def build(self):
-        self.screen = Builder.load_file("layout.kv")
-        return self.screen
+            self.screen = Builder.load_file("wheretogo.kv")
+            return self.screen
 
 class MyHero(MDHeroFrom):
     def on_transform_in(
