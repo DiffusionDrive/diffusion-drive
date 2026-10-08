@@ -1,0 +1,61 @@
+#: import MDScreen kivymd.uix.screen.MDScreen
+#: import MDScreenManager kivymd.uix.screenmanager.MDScreenManager
+#: import MDHeroFrom kivymd.uix.hero.MDHeroFrom
+#: import MDHeroTo kivymd.uix.hero.MDHeroTo
+#: import MDButton kivymd.uix.button.MDButton
+#: import MDButtonText kivymd.uix.button.MDButtonText
+
+MDScreenManager:
+
+    MDScreen:
+        name: "screen A"
+        md_bg_color: "lightblue"
+
+        MyHero:
+            id: hero_from
+            tag: "hero"
+            size_hint: None, None
+            size: "120dp", "120dp"
+            pos_hint: {"top": .98}
+            x: 24
+
+            MDRelativeLayout:
+                size_hint: None, None
+                size: hero_from.size
+                md_bg_color: "blue"
+                radius: [24, 12, 24, 12]
+
+                FitImage:
+                    source: "kivymd/images/logo/kivymd-icon-512.png"
+            
+        MDButton:
+            pos_hint: {"center_x": .5}
+            y: "36dp"
+            on_release:
+                root.current_heroes = ["hero"]
+                root.current = "screen B"
+
+            MDButtonText:
+                text: "Move Hero To Screen B"
+
+    MDScreen:
+        name: "screen B"
+        hero_to: hero_to
+        md_bg_color: = "cadetblue"
+
+        MDHeroTo:
+            id: hero_to
+            tag: "hero"
+            size_hint: None, None
+            size: "220dp", "220dp"
+            pos_hint: {"center_x": .5, "center_y": .5}
+        
+        MDButton:
+            pos_hint: {"center_x": .5}
+            y: "36dp"
+            on_release:
+                root.current_heroes = ["hero"]
+                root.current = "screen A"
+            
+            MDButtonText:
+                text: "Move Hero To Screen A"
