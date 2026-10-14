@@ -1,0 +1,37 @@
+#: import MapSource kivy_garden.mapview.MapSource
+#: import MDTextField kivymd.uix.textfield.textfield.MDTextField
+#: import MDSearchBar kivymd.uix.search.search.MDSearchBar
+#: import MDDropdownMenu kivymd.uix.menu.MDDropdownMenu
+
+MDRelativeLayout:
+    MapView:
+        lat: 1.296
+        lon: 103.776
+        zoom: 16
+
+        MapMarkerPopup:
+            lat:1.296
+            lon: 103.776
+
+            popup_size:dp(230),dp(130)
+            Bubble:
+                MDBoxLayout:
+                    padding: "4dp"
+                    MDLabel:
+                        text: "You in here"
+                        markup: True
+                        halign: "center"
+
+    MDTextField:
+        mode: "filled"
+
+        MDTextFieldLeadingIcon:
+            icon: "magnify"
+
+    MDDropDownItem:
+        pos_hint: {"center_x": .1, "center_y": .95}
+        on_release: app.open_menu(self)
+
+        MDDropDownItemText:
+            id: drop_text
+            text: "Item"
