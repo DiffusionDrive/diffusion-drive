@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 from dataclasses import dataclass
 from typing import Any, Optional
 from src.core.types import PlannerInput, Trajectory
@@ -73,85 +74,30 @@ class DiffusionPlannerNode:
         print(f"Diffusion Planner initialized on {self.device}")
 
     def plan(self, inputs: PlannerInput) -> Trajectory:
+        # Convert dataclass to tensor dictionary
         tensor_inputs = map_input_to_tensors(inputs, self.device)
 
-        with torch.no_grad():
-            raw_output = self.model(tensor_inputs)
+        # 1. Normalize observations for the encoder/attention layers
+        normalized_inputs = self.config.observation_normalizer(tensor_inputs)
 
-            # Handle the tuple return from the master Diffusion_Planner wrapper
+        with torch.no_grad():
+            # 2. Forward pass through neural network
+            raw_output = self.model(normalized_inputs)
+
             if isinstance(raw_output, tuple):
-                # Find the dictionary containing the 'prediction' key
                 decoder_outputs = next(
-                    item
-                    for item in raw_output
-                    if isinstance(item, dict) and "prediction" in item
+                    item for item in raw_output if isinstance(item, dict) and "prediction" in item
                 )
             else:
                 decoder_outputs = raw_output
 
             trajectory_tensor = decoder_outputs["prediction"]
 
+        # 3. Extract physical trajectory directly (the model sampler already denormalized it)
+        ego_states = trajectory_tensor[0, 0].cpu().numpy()
+        neighbor_preds = trajectory_tensor[0, 1:].cpu().numpy()
+
         return Trajectory(
-            ego_states=trajectory_tensor[0, 0].cpu().numpy(),
-            neighbor_predictions=trajectory_tensor[0, 1:].cpu().numpy(),
+            ego_states=ego_states,
+            neighbor_predictions=neighbor_preds,
         )
-
-
-if __name__ == "__main__":
-    import numpy as np
-    import os
-    from commonroad.common.file_reader import CommonRoadFileReader
-
-    # Import the new adapters
-    from src.planner.adapter import (
-        extract_map_tensors,
-        extract_neighbor_tensors,
-        extract_ego_state,
-        extract_static_objects,
-        extract_navigation_route,
-    )
-
-    print("Initializing Full Integration Test...")
-
-    # 1. Instantiate the planner node
-    ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
-    ckpt_path = os.path.join(ROOT_DIR, "checkpoints", "model.pth")
-    planner = DiffusionPlannerNode(checkpoint_path=ckpt_path, device="cpu")
-
-    # 2. Load the CommonRoad Scenario
-    file_path = os.path.join(
-        ROOT_DIR, "data", "scenarios", "DEU_Flensburg-41_1_T-1.xml"
-    )
-    scenario, planning_problem_set = CommonRoadFileReader(file_path).open()
-    ego_id = list(planning_problem_set.planning_problem_dict.keys())[0]
-    planning_problem = planning_problem_set.planning_problem_dict[ego_id]
-
-    # 3. Extract Live Tensors
-    print("Extracting live tensors from scenario...")
-    polylines, speed_limit, has_speed = extract_map_tensors(scenario)
-    neighbors = extract_neighbor_tensors(scenario, current_time_step=0)
-    ego_state = extract_ego_state(planning_problem, current_time_step=0)
-    static_objs = extract_static_objects(scenario)
-    nav_route = extract_navigation_route(scenario, planning_problem)
-
-    # 4. Pack into PlannerInput contract
-    live_input = PlannerInput(
-        ego_current_state=ego_state,
-        neighbors_history=neighbors,
-        lane_polylines=polylines,
-        lanes_speed_limit=speed_limit,
-        lanes_has_speed_limit=has_speed,
-        static_objects=static_objs,
-        navigation_route=nav_route,
-    )
-
-    # 5. Run the Neural Network
-    print("Running Diffusion Planner forward pass...")
-    output_trajectory = planner.plan(live_input)
-
-    print(
-        f"✅ Success! Generated Ego Trajectory Shape: {output_trajectory.ego_states.shape}"
-    )
-    print(
-        f"First 3 future waypoints (x, y, cos, sin):\n{np.round(output_trajectory.ego_states[:3], 2)}"
-    )
