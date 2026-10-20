@@ -1,189 +1,201 @@
+import os
+import sys
 import torch
 import numpy as np
-from dataclasses import dataclass
+import matplotlib.pyplot as plt
 from commonroad.common.file_reader import CommonRoadFileReader
+from commonroad.visualization.mp_renderer import MPRenderer
 
-# Import adapters and models
-from src.planner.diffusion_es.adapter_diffusion_es import (
-    extract_pgp_map_tensor,
-    extract_pgp_agent_tensors,
-)
-from src.planner.diffusion_es.models.pgp.pgp_model import PGPModel
-from src.planner.diffusion_es.models.pgp.pgp_encoder import PGPEncoder
-from src.planner.diffusion_es.models.pgp.pgp_aggregator import PGP
-from src.planner.diffusion_es.models.pgp.pgp_decoder import LVM
+# 1. Add nuplan-devkit to path so the model unpickles correctly
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.abspath(os.path.join(current_dir, ".."))
+sys.path.append(os.path.join(project_root, "src", "planner", "diffusion_es", "nuplan_devkit"))
 
+from src.planner.diffusion_es.adapter import extract_vector_map, extract_ego_history, extract_agent_history
 
-# --- Mock Dataclasses to replace nuPlan dependencies ---
-@dataclass
-class MockGraphMap:
-    lane_node_feats: torch.Tensor
-    lane_node_masks: torch.Tensor
-    nodes_on_route_flag: torch.Tensor
-    red_light_flag: torch.Tensor
-    s_next: torch.Tensor
-    edge_type: torch.Tensor
-    edge_on_route_mask: torch.Tensor
+class MockAgentHistory:
+    def __init__(self, ego_history, agent_data, agent_masks):
+        self.ego = ego_history
+        self.data = agent_data
+        self.mask = agent_masks
+        self.batch_size = ego_history.shape[0]
 
+    def repeat_interleave(self, repeats, dim=0):
+        """Duplicates the tensors along the batch dimension for multimodal inference."""
+        return MockAgentHistory(
+            self.ego.repeat_interleave(repeats, dim),
+            self.data.repeat_interleave(repeats, dim),
+            self.mask.repeat_interleave(repeats, dim)
+        )
 
-@dataclass
-class MockEgoAgents:
-    ego_feats: torch.Tensor
-    vehicle_agent_feats: torch.Tensor
-    vehicle_agent_masks: torch.Tensor
-    pedestrians_agent_feats: torch.Tensor
-    pedestrians_agent_masks: torch.Tensor
+class MockVectorMap:
+    def __init__(self, coords, masks, traffic_lights):
+        self.coords = coords # The (x, y) coordinates for each map element
+        self.traffic_light_data = traffic_lights # One-hot encoding of traffic light status
+        self.availabilities = masks # Boolean indicator of whether feature data is available or zero-padded
 
+def test_model():
+    print("1. Loading DEU_Flensburg-41_1_T-1.xml...")
+    xml_path = os.path.join(project_root, "data", "scenarios", "DEU_Flensburg-41_1_T-1.xml")
+    scenario, pp_set = CommonRoadFileReader(xml_path).open()
+    planning_problem = list(pp_set.planning_problem_dict.values())[0]
 
-@dataclass
-class MockAgentNodeMasks:
-    vehicle_node_masks: torch.Tensor
-    pedestrian_node_masks: torch.Tensor
+    print("2. Extracting Vector Tensors...")
+    map_coords, map_avails, map_tl = extract_vector_map(scenario, planning_problem)
+    ego_history = extract_ego_history(planning_problem)
+    agent_data, agent_masks = extract_agent_history(scenario)
 
+    print("3. Transforming Global -> Ego-Centric...")
+    ego_x, ego_y = planning_problem.initial_state.position
+    ego_yaw = planning_problem.initial_state.orientation
+    cos_inv, sin_inv = np.cos(-ego_yaw), np.sin(-ego_yaw)
 
-@dataclass
-class MockPGPTraversals:
-    visited_edges: torch.Tensor
-    init_node: torch.Tensor
-    node_seq_gt: torch.Tensor
+    def to_ego_centric_map(coords_dict, masks_dict):
+        for key in coords_dict.keys():
+            coords = coords_dict[key]
+            valid = masks_dict[key]
 
+            # Isolate the translated coordinates so they aren't overwritten early
+            dx = coords[valid, 0] - ego_x
+            dy = coords[valid, 1] - ego_y
 
-@dataclass
-class MockPGPFeatures:
-    graph_map: MockGraphMap
-    ego_agent_features: MockEgoAgents
-    att_node_masks: MockAgentNodeMasks
-    traversal_features: MockPGPTraversals
-    has_init_node: bool = False
+            coords[valid, 0] = dx * cos_inv - dy * sin_inv
+            coords[valid, 1] = dx * sin_inv + dy * cos_inv
+        return coords_dict
 
+    def to_ego_centric_kinematics(tensor):
+        # Translate X, Y
+        dx = tensor[..., 0] - ego_x
+        dy = tensor[..., 1] - ego_y
+        tensor[..., 0] = dx * cos_inv - dy * sin_inv
+        tensor[..., 1] = dx * sin_inv + dy * cos_inv
 
-def test_smoke_run():
-    print("1. Loading CommonRoad Scenario...")
-    # Find any XML file in your project to test with
-    xml_file = (
-        "../data/scenarios/DEU_Flensburg-41_1_T-1.xml"  # Update this path if needed
-    )
-    scenario, planning_problem_set = CommonRoadFileReader(xml_file).open()
-    planning_problem = list(planning_problem_set.planning_problem_dict.values())[0]
+        # Rotate Yaw
+        tensor[..., 2] -= ego_yaw
 
-    print("2. Extracting Tensors via Diffusion-ES Adapter...")
-    map_feats, map_masks = extract_pgp_map_tensor(scenario)
-    ego_feats, veh_feats, ped_feats, veh_masks, ped_masks = extract_pgp_agent_tensors(
-        scenario, planning_problem
-    )
+        # Isolate Velocities
+        dvx = tensor[..., 3].clone()
+        dvy = tensor[..., 4].clone()
+        tensor[..., 3] = dvx * cos_inv - dvy * sin_inv
+        tensor[..., 4] = dvx * sin_inv + dvy * cos_inv
 
-    # Create route flag (Mocking the route for now)
-    # Create dummy graph adjacency matrices (must be int64!)
-    max_edges = 15
-    s_next = np.zeros((map_feats.shape[0], max_edges), dtype=np.float32)
-    edge_type = np.zeros((map_feats.shape[0], max_edges), dtype=np.float32)
-    route_flag = np.zeros((map_feats.shape[0], map_feats.shape[1], 1), dtype=np.float32)
-    att_veh_masks = np.zeros((map_feats.shape[0], veh_feats.shape[0]), dtype=np.float32)
-    att_ped_masks = np.zeros((map_feats.shape[0], ped_feats.shape[0]), dtype=np.float32)
-    edge_on_route_mask = np.zeros((map_feats.shape[0], max_edges), dtype=np.float32)
+        # Isolate Accelerations
+        dax = tensor[..., 5].clone()
+        day = tensor[..., 6].clone()
+        tensor[..., 5] = dax * cos_inv - day * sin_inv
+        tensor[..., 6] = dax * sin_inv + day * cos_inv
 
-    print("3. Packaging into PyTorch Dataclasses...")
-    graph_map = MockGraphMap(
-        lane_node_feats=torch.tensor(map_feats).unsqueeze(0),
-        lane_node_masks=torch.tensor(map_masks).unsqueeze(0).unsqueeze(-1),
-        nodes_on_route_flag=torch.tensor(route_flag).unsqueeze(0),
-        red_light_flag=torch.tensor(route_flag).unsqueeze(0),
-        s_next=torch.tensor(s_next).unsqueeze(0),
-        edge_type=torch.tensor(edge_type).unsqueeze(0),
-        edge_on_route_mask=torch.tensor(edge_on_route_mask).unsqueeze(0),
-    )
+        return tensor
 
-    ego_agents = MockEgoAgents(
-        ego_feats=torch.tensor(ego_feats).unsqueeze(0),
-        vehicle_agent_feats=torch.tensor(veh_feats).unsqueeze(0),
-        vehicle_agent_masks=torch.tensor(veh_masks).unsqueeze(0).unsqueeze(-1),
-        pedestrians_agent_feats=torch.tensor(ped_feats).unsqueeze(0),
-        pedestrians_agent_masks=torch.tensor(ped_masks).unsqueeze(0).unsqueeze(-1),
-    )
+    map_coords = to_ego_centric_map(map_coords, map_avails)
+    ego_history = to_ego_centric_kinematics(ego_history)
+    agent_data = to_ego_centric_kinematics(agent_data)
 
-    att_node_masks = MockAgentNodeMasks(
-        vehicle_node_masks=torch.tensor(att_veh_masks).unsqueeze(0),
-        pedestrian_node_masks=torch.tensor(att_ped_masks).unsqueeze(0),
-    )
+    print("4. Loading Model and Weights...")
+    from omegaconf import OmegaConf
+    from src.planner.diffusion_es.nuplan_devkit.nuplan.planning.script.builders.model_builder import build_torch_module_wrapper
 
-    # Initialize the missing traversal tensors
-    visited_edges = np.zeros((map_feats.shape[0], 1), dtype=np.int64)
+    # 1. Load Hydra config saved from HPC training
+    cfg_path = os.path.join(project_root, "checkpoints", "diffusion_es", "config.yaml")
+    if not os.path.exists(cfg_path):
+        raise FileNotFoundError(f"Could not find config.yaml at {cfg_path}. Ensure it was copied from HPC.")
 
-    # init_node must be a probability distribution over the map nodes [Max_Nodes]
-    init_node = np.zeros((map_feats.shape[0],), dtype=np.float32)
-    init_node[0] = 1.0  # 100% probability of starting at node 0
+    config = OmegaConf.load(cfg_path)
 
-    node_seq_gt = np.zeros((1, 80), dtype=np.int64)  # Placeholder for pre-training
+    # 2. Build model architecture matching HPC parameters exactly
+    model = build_torch_module_wrapper(config.model)
 
-    traversals = MockPGPTraversals(
-        visited_edges=torch.tensor(visited_edges).unsqueeze(0),
-        init_node=torch.tensor(init_node).unsqueeze(0),  # <-- Now shape [1, 200]
-        node_seq_gt=torch.tensor(node_seq_gt).unsqueeze(0),
-    )
+    # 3. Load Checkpoint weights
+    ckpt_path = os.path.join(project_root, "checkpoints", "diffusion_es", "model_cond.ckpt")
 
-    pgp_features = MockPGPFeatures(
-        graph_map=graph_map,
-        ego_agent_features=ego_agents,
-        att_node_masks=att_node_masks,
-        traversal_features=traversals,
-        has_init_node=True,  # <-- CRITICAL: This allows the encoder to pass the edges!
-    )
-    features_dict = {"pgp_features": pgp_features}
+    import pickle
+    class DummyClass: pass
+    class MockUnpickler(pickle.Unpickler):
+        def find_class(self, module, name):
+            if module.startswith("nuplan.planning.training.callbacks"): return DummyClass
+            return super().find_class(module, name)
+    class MockPickleModule:
+        Unpickler = MockUnpickler; load = pickle.load; loads = pickle.loads
 
-    print("4. Initializing Dummy Model...")
-    encoder = PGPEncoder(
-        target_agent_feat_size=7,
-        target_agent_emb_size=32,
-        target_agent_enc_size=64,
-        node_feat_size=7,
-        node_emb_size=32,
-        node_enc_size=64,
-        nbr_feat_size=7,
-        nbr_emb_size=32,
-        nbr_enc_size=32,
-        num_gat_layers=2,
-        use_route_feature=True,
-        use_red_light_feature=True,
-    )
+    checkpoint = torch.load(ckpt_path, map_location="cpu", weights_only=False, pickle_module=MockPickleModule)
 
-    aggregator = PGP(
-        pre_train=False,
-        node_enc_size=64,
-        target_agent_enc_size=64,
-        pi_h1_size=64,
-        pi_h2_size=64,
-        emb_size=128,
-        num_heads=4,
-        use_route_mask=True,
-        hard_masking=False,
-        num_samples=1,
-        num_traversals=1,
-        horizon=80,
-    )
+    # Clean state dict keys (strip 'model.' prefix if saved by PyTorch Lightning)
+    state_dict = checkpoint["state_dict"] if "state_dict" in checkpoint else checkpoint
+    clean_state_dict = {
+        (k[6:] if k.startswith("model.") else k): v
+        for k, v in state_dict.items()
+    }
 
-    decoder = LVM(
-        encoding_size=192,
-        agg_type="sample_specific",
-        lv_dim=5,
-        hidden_size=128,
-        num_clusters=1,
-        use_ray=False,
-        num_samples=1,
-        op_len=80,
-    )
-
-    model = PGPModel(encoder=encoder, aggregator=aggregator, decoder=decoder)
-
-    # Load your generated checkpoint
-    model.load_state_dict(torch.load("../checkpoints/diffusion_es/model.ckpt"))
+    model.load_state_dict(clean_state_dict, strict=False)
     model.eval()
 
     print("5. Running Forward Pass...")
+
+    # Extract Goal Center in Global Coordinates
+    goal_state = planning_problem.goal.state_list[0]
+    goal_center_global = np.mean(goal_state.position.shapes[0].vertices, axis=0) if hasattr(goal_state.position, 'shapes') else np.mean(goal_state.position.vertices, axis=0)
+
+    # Transform Goal Center to Ego-Centric Frame
+    dx_g = goal_center_global[0] - ego_x
+    dy_g = goal_center_global[1] - ego_y
+    goal_x_ego = dx_g * cos_inv - dy_g * sin_inv
+    goal_y_ego = dx_g * sin_inv + dy_g * cos_inv
+    goal_tensor = torch.tensor([goal_x_ego, goal_y_ego], dtype=torch.float32)
+
+    # Goal-Reaching Cost for Diffusion-ES Guidance
+    def goal_constraint(trajectory):
+        """
+        trajectory: [Batch_Size, 48] or [Batch_Size, Horizon, 3]
+        """
+        # Ensure tensor is reshaped to [Batch_Size, Horizon, 3]
+        if trajectory.ndim == 2:
+            trajectory = trajectory.reshape(trajectory.shape[0], -1, 3)
+
+        batch_size = trajectory.shape[0]
+
+        # Distance from final predicted pose (timestep -1) to target box center
+        final_poses = trajectory[:, -1, :2]  # [Batch_Size, 2]
+        dist_to_goal = torch.norm(final_poses - goal_tensor.to(trajectory.device), dim=-1)
+
+        # Scale cost weight to guide sampling optimization
+        cost = dist_to_goal * 10.0
+
+        info = {"traj_sim": torch.zeros((batch_size, 3), device=trajectory.device)}
+        return cost, info
+
+    features = {
+        "agent_history": MockAgentHistory(ego_history, agent_data, agent_masks),
+        "vector_set_map": MockVectorMap(map_coords, map_avails, map_tl),
+        "constraints": [goal_constraint]
+    }
+
     with torch.no_grad():
-        output = model(features_dict)
+        output = model.run_diffusion_es(features)
 
-    print(f"✅ Success! Trajectory generated with shape: {output['trajectory'].shape}")
+    print("6. Transforming Ego-Centric -> Global and Plotting Multimodal Spray...")
+    cos_y, sin_y = np.cos(ego_yaw), np.sin(ego_yaw)
 
+    rnd = MPRenderer(figsize=(12, 12))
+    scenario.draw(rnd)
+    planning_problem.draw(rnd)
+    rnd.render()
+
+    # Extract all generated trajectories and reshape to [Samples, Horizon, 3]
+    raw_trajectories = output["multimodal_trajectories"].data.cpu().numpy()
+    multimodal_trajectories = raw_trajectories.reshape(-1, 16, 3)
+
+    for idx in range(multimodal_trajectories.shape[0]):
+        pred = multimodal_trajectories[idx]
+        global_x = pred[:, 0] * cos_y - pred[:, 1] * sin_y + ego_x
+        global_y = pred[:, 0] * sin_y + pred[:, 1] * cos_y + ego_y
+
+        # Plot the entire distribution spray generated by the diffusion model
+        color = 'blue' if idx > 0 else 'red'
+        alpha = 0.3 if idx > 0 else 0.8
+        plt.plot(global_x, global_y, color=color, linewidth=2, alpha=alpha, zorder=30)
+
+    plt.title("CommonRoad + Conditional Diffusion-ES Multimodal Output")
+    plt.show()
 
 if __name__ == "__main__":
-    test_smoke_run()
+    test_model()

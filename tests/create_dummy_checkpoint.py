@@ -58,7 +58,7 @@ def create_dummy_weights():
     model = PGPModel(encoder=encoder, aggregator=aggregator, decoder=decoder)
 
     os.makedirs("../checkpoints/diffusion_es", exist_ok=True)
-    save_path = "../checkpoints/diffusion_es/model.ckpt"
+    save_path = "../checkpoints/diffusion_es/model_cond.ckpt"
     torch.save(model.state_dict(), save_path)
 
     print(f"Successfully saved dummy checkpoint to {save_path}")

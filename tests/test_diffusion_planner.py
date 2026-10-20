@@ -1,76 +1,103 @@
-from commonroad.common.file_reader import CommonRoadFileReader
 import os
+import glob
+import torch
 import numpy as np
+import matplotlib.pyplot as plt
+from commonroad.common.file_reader import CommonRoadFileReader
+from commonroad.visualization.mp_renderer import MPRenderer
 
+from src.core.types import PlannerInput
+from src.planner.diffusion_planner.inference import DiffusionPlannerNode
+from src.planner.diffusion_planner.adapter import (
+    extract_map_tensors, extract_neighbor_tensors, extract_navigation_route,
+    extract_static_objects, extract_ego_state, normalize_to_ego_frame
+)
 
-def test_load_scenario():
-    # 1. Load the XML file
-    file_path = "../data/scenarios/DEU_Flensburg-41_1_T-1.xml"
+def test_run():
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.abspath(os.path.join(current_dir, ".."))
 
-    if not os.path.exists(file_path):
-        print(f"Error: Could not find {file_path}. Did you put it in the right folder?")
-        return
+    scenario_search_path = os.path.join(project_root, "data", "scenarios", "*.xml")
+    scenario_files = glob.glob(scenario_search_path)
+    if not scenario_files:
+        raise FileNotFoundError("No .xml scenario files found in data/scenarios/")
 
-    scenario, planning_problem_set = CommonRoadFileReader(file_path).open()
+    scenario_path = scenario_files[0]
+    scenario, planning_problem_set = CommonRoadFileReader(scenario_path).open()
+    planning_problem = list(planning_problem_set.planning_problem_dict.values())[0]
 
-    # 2. Extract the ego vehicle's planning problem
-    ego_id = list(planning_problem_set.planning_problem_dict.keys())[0]
-    planning_problem = planning_problem_set.planning_problem_dict[ego_id]
-
-    # 3. Print the verification stats
-    print(f"✅ Successfully loaded {scenario.scenario_id}!")
-    print(f"🚗 Found {len(scenario.dynamic_obstacles)} dynamic obstacles (neighbors).")
-    print(f"🛣️ Found {len(scenario.lanelet_network.lanelets)} lanelets in the map.")
-    print(f"🎯 Ego vehicle must reach goal state: {planning_problem.goal}")
-
-    print(f"🎯 Ego vehicle must reach goal state: {planning_problem.goal}")
-
-    # --- NEW TEST CODE ---
-    from src.planner.adapter import extract_map_tensors
-
-    print("\nExtracting Map Tensors...")
-    polylines, speed, has_speed = extract_map_tensors(scenario)
-
-    print(f"Polylines shape: {polylines.shape} (Expected: 70, 20, 12)")
-    print(f"Speed limit shape: {speed.shape} (Expected: 70, 1)")
-    print(f"Has speed limit shape: {has_speed.shape} (Expected: 70, 1)")
-
-    # Print the features of the first point of the first lane
-    print(
-        f"Lane 0, Point 0 Features (x, y, dx, dy, lx-x, ly-y, rx-x, ry-y, ...):\n{np.round(polylines[0, 0], 2)}"
+    # Initialize your original node
+    planner = DiffusionPlannerNode(
+        checkpoint_path=os.path.join(project_root, "checkpoints", "diffusion_planner", "model.pth"),
+        device="cuda" if torch.cuda.is_available() else "cpu"
     )
 
-    print("\nExtracting Neighbor Tensors...")
-    from src.planner.adapter import extract_neighbor_tensors
-
-    # We use time step 0 for the test. In the real simulation, Student A will pass the live time step.
+    # 1. Extract Raw Global Data
+    polylines, speed, has_speed = extract_map_tensors(scenario, planning_problem)
     neighbors = extract_neighbor_tensors(scenario, current_time_step=0)
+    static_objs = extract_static_objects(scenario)
+    nav_route, route_speed, route_has_speed = extract_navigation_route(scenario, planning_problem)
 
-    print(f"Neighbors shape: {neighbors.shape} (Expected: 32, 21, 11)")
+    # Use the vehicle's exact ground-truth orientation from planning_problem
+    ego_state = extract_ego_state(planning_problem)
+    ego_pose = ego_state[:4]
 
-    # Check the latest timestep (index 20) of the first vehicle (index 0)
-    print(
-        f"Vehicle 0, Latest State (x, y, cos, sin, vx, vy, w, l, type[3]):\n{np.round(neighbors[0, 20], 2)}"
+    # 2. Transform spatial data to Ego-Centric frame
+    local_poly, local_neigh, local_route, local_stat = normalize_to_ego_frame(
+        ego_pose, polylines, neighbors, nav_route, static_objs
     )
 
-    print("\nExtracting Ego & Static Tensors...")
-    from src.planner.adapter import extract_ego_state, extract_static_objects
+    # 3. Formulate local ego state with forward velocity
+    vel = np.linalg.norm(ego_state[4:6])
+    accel = np.linalg.norm(ego_state[6:8])
 
-    ego_state = extract_ego_state(planning_problem)
-    static_objs = extract_static_objects(scenario)
+    local_ego = np.array([
+        0.0, 0.0, 1.0, 0.0,
+        vel, 0.0,
+        accel, 0.0,
+        2.30, 5.18
+    ], dtype=np.float32)
 
-    print(f"Ego state shape: {ego_state.shape} (Expected: (4,))")
-    print(f"Ego state values: {np.round(ego_state, 2)}")
-    print(f"Static objects shape: {static_objs.shape} (Expected: 5, 10)")
+    live_input = PlannerInput(
+        ego_current_state=local_ego,
+        neighbor_agents_past=local_neigh,
+        lanes=local_poly,
+        lanes_speed_limit=speed,
+        lanes_has_speed_limit=has_speed,
+        static_objects=local_stat,
+        route_lanes=local_route,
+        route_lanes_speed_limit=route_speed,
+        route_lanes_has_speed_limit=route_has_speed
+    )
 
-    print("\nExtracting Navigation Route Tensor...")
-    from src.planner.adapter import extract_navigation_route
+    output_trajectory = planner.plan(live_input)
 
-    nav_route = extract_navigation_route(scenario, planning_problem)
+    # 4. Transform Local Output Trajectory back to Global Map Coordinates
+    ego_x, ego_y, cos_yaw, sin_yaw = ego_pose
+    yaw = np.arctan2(sin_yaw, cos_yaw)
 
-    print(f"Navigation Route shape: {nav_route.shape} (Expected: 25, 20, 4)")
-    print(f"First point of the route (x, y, dx, dy): {np.round(nav_route[0, 0], 2)}")
+    rot_matrix = np.array([
+        [np.cos(yaw), -np.sin(yaw)],
+        [np.sin(yaw),  np.cos(yaw)]
+    ])
 
+    local_xy = output_trajectory.ego_states[:, :2]
+    global_xy = (rot_matrix @ local_xy.T).T + np.array([ego_x, ego_y])
+
+    # 5. Plotting
+    plt.figure(figsize=(12, 12))
+    rnd = MPRenderer()
+    scenario.draw(rnd)
+    planning_problem.draw(rnd)
+    rnd.render()
+
+    plt.plot(global_xy[:, 0], global_xy[:, 1],
+             color='red', linewidth=2.5, marker='o', markersize=3,
+             label='Diffusion-Planner Output', zorder=20)
+
+    plt.legend()
+    plt.title("Diffusion-Planner Trajectory")
+    plt.show()
 
 if __name__ == "__main__":
-    test_load_scenario()
+    test_run()
