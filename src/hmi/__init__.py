@@ -32,7 +32,7 @@ class Demo(ScreenManager):
 
 class MainApp(MDApp):
     def build(self):
-            Builder.load_file("layoutdemo.kv")
-            return Demo()
+        Builder.load_file("layoutdemo.kv")
+        return Demo() 
 
 MainApp().run()
