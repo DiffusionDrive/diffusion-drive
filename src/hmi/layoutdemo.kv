@@ -5,7 +5,7 @@ ScreenManagement:
     Screen3:
 	
 <MainScreen>:
-    name: 'main'
+    name: 'map'
 
     Button:
         on_release: app.root.current = 'goto'
@@ -24,14 +24,26 @@ ScreenManagement:
     name: 'from'
 
     Button:
-        on_release: app.root.current = 'main_mark'
+        on_release: app.root.current = 'map_mark'
         text: 'from'
         font_size: 50
 
 <Screen3>:
-    name: 'main_mark'
+    name: 'map_mark'
+    MapView:
+        lat: 52.52
+        lon: 13.405
+        zoom: 16
 
-    Button:
-        on_release: app.root.current = 'goto'
-        text: 'main_mark'
-        font_size: 50
+        MapMarkerPopup:
+            lat: 52.52
+            lon: 13.403
+
+            popup_size:dp(230),dp(130)
+    
+        MapMarkerPopup:
+            lat: 52.52
+            lon: 13.406
+
+            popup_size:dp(230),dp(130)
+    
