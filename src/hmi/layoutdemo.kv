@@ -26,7 +26,7 @@ ScreenManagement:
         Button:
             text: "Top Right"
             pos_hint: {"x":.8, "top":1}
-            on_release: app.root.current = 'goto'
+            on_press: app.root.current = 'goto'
             
 <Screen1>:
     name: 'goto'
@@ -47,7 +47,7 @@ ScreenManagement:
         text: 'Submit'
         pos_hint: {"x":.8, "top":0.8}
         on_press: root.press()
-        on_release: app.root.current = 'from'
+        on_press: app.root.current = 'from'
 
 <Screen2>:
     name: 'from'
@@ -68,7 +68,7 @@ ScreenManagement:
         text: 'Submit'
         pos_hint: {"x":.8, "top":0.8}
         on_press: root.press()
-        on_release: app.root.current = 'map_mark'
+        on_press: app.root.current = 'map_mark'
 
 <Screen3>:
     name: 'map_mark'
@@ -93,4 +93,4 @@ ScreenManagement:
     Button:
         text: "Top Right"
         pos_hint: {"x":.8, "top":1}
-        on_release: app.root.current = 'goto'
+        on_press: app.root.current = 'goto'
