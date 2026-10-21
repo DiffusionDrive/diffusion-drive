@@ -3,30 +3,46 @@ ScreenManagement:
     Screen1:
     Screen2:
     Screen3:
-	
-<MainScreen>:
-    name: 'map'
 
-    Button:
-        on_release: app.root.current = 'goto'
-        text: 'Another Screen'
-        font_size: 50
+<Button>
+    font_size: 24
+    size_hint: (0.3, 0.3)
+
+<MainScreen>:
+
+    FloatLayout:
+        name: 'map'
+        size: root.width, root.height
+
+        MapView:
+            lat: 52.52
+            lon: 13.405
+            zoom: 16
+
+        Button:
+            text: "Top Left"
+            pos_hint: {"x":0, "top":1}
+
+        Button:
+            text: "Top Right"
+            pos_hint: {"x":.7, "top":1}
+            on_release: app.root.current = 'goto'
             
 <Screen1>:
     name: 'goto'
+    size: root.width, root.height
 
     Button:
-        on_release: app.root.current = 'from'
         text: 'goto'
-        font_size: 50
+        on_release: app.root.current = 'from'
 
 <Screen2>:
     name: 'from'
+    size: root.width, root.height
 
     Button:
-        on_release: app.root.current = 'map_mark'
         text: 'from'
-        font_size: 50
+        on_release: app.root.current = 'map_mark'
 
 <Screen3>:
     name: 'map_mark'
