@@ -32,16 +32,36 @@ ScreenManagement:
     name: 'goto'
     size: root.width, root.height
 
+    Label:
+        text: "Where to go?"
+        color: "black"
+        font_size: 32
+
+    TextInput:
+        multiline: False
+        size_hint: (1, .2)
+
     Button:
-        text: 'goto'
+        text: 'Submit'
+        pos_hint: {"x":.7, "top":1}
         on_release: app.root.current = 'from'
 
 <Screen2>:
     name: 'from'
     size: root.width, root.height
 
+    Label:
+        text: "Where are you?"
+        color: "black"
+        font_size: 32
+
+    TextInput:
+        multiline: False
+        size_hint: (1, .2)
+
     Button:
-        text: 'from'
+        text: 'Submit'
+        pos_hint: {"x":.7, "top":1}
         on_release: app.root.current = 'map_mark'
 
 <Screen3>:
