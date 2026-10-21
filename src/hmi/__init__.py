@@ -25,13 +25,14 @@ from kivymd.uix.button import MDButton, MDButtonText
 from kivymd.uix.relativelayout import MDRelativeLayout
 
 Window.size = (375,667)
+Window.clearcolor = (200/255.0, 255/255.0, 151/255.0, 0.6)
 
 class Demo(ScreenManager):
     pass
 
 class MainApp(MDApp):
     def build(self):
-            Builder.load_file("layoutdemo.kv")
-            return Demo()
+        Builder.load_file("layoutdemo.kv")
+        return Demo() 
 
 MainApp().run()

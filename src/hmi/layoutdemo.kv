@@ -1,49 +1,91 @@
 #: import MapSource kivy_garden.mapview.MapSource
 #: import MDTextField kivymd.uix.textfield.textfield.MDTextField
+#: import Validator kivymd.uix.textfield.textfield.Validator
 
 <Demo>:
     Screen:
         name: "map"
         MapView:
-            lat: 1.296
-            lon: 103.776
+            lat: 52.52
+            lon: 13.405
             zoom: 16
 
-        MapMarkerPopup:
-            lat: 1.296
-            lon: 103.776
-
-            popup_size:dp(230),dp(130)
-            Bubble:
-                MDBoxLayout:
-                    padding: "4dp"
-                    MDLabel:
-                        text: "You in here"
-                        markup: True
-                        halign: "center"
-        
         MDButton:
             text: "go to screen 1"
-            pos_hint: {"center_y": .5, "center_x": .1}
+            pos_hint: {"center_y": .5, "center_x": .9}
             on_release: root.current = "screen1"
     
     Screen:
         name: "screen1"
+
         MDLabel:
-            text: 'screen1'
+            text: 'Where would you like to go?'
             halign: 'center'
+
+        MDTextField:
+            mode: "filled"
+            text: "Enter location"
+            MDTextFieldLeadingIcon:
+                icon: "magnify"
+
         MDButton:
-            text: "go to screen 2"
-            pos_hint: {"center_y": .5, "center_x": .4}
+            text: "NEXT"
+            pos_hint: {"center_y": .5, "center_x": .9}
             on_release: root.current = "screen2"
 
     Screen:
         name: "screen2"
+
         MDLabel:
-            text: 'screen2'
+            text: 'Where are you from?'
             halign: 'center'
+
+        MDTextField:
+            mode: "filled"
+            text: "Enter location"
+            MDTextFieldLeadingIcon:
+                icon: "magnify"
+
+        MDButton:
+            text: "LET'S GO"
+            pos_hint: {"center_y": .5, "center_x": .9}
+            on_release: root.current = "map_points"
+
+    Screen:
+        name: "map_points"
+        MapView:
+            lat: 52.52
+            lon: 13.405
+            zoom: 16
+            
+            MapMarkerPopup:
+                lat: 52.52
+                lon: 13.405
+
+                popup_size:dp(230),dp(130)
+                Bubble:
+                    MDBoxLayout:
+                        padding: "4dp"
+                        MDLabel:
+                            text: "You in here"
+                            markup: True
+                            halign: "center"
+
+            MapMarkerPopup:
+                lat: 52.522
+                lon: 13.406
+
+                popup_size:dp(230),dp(130)
+                Bubble:
+                    MDBoxLayout:
+                        padding: "4dp"
+                        MDLabel:
+                            text: "You in here 2"
+                            markup: True
+                            halign: "center"
+
         MDButton:
             text: "go to screen 1"
-            pos_hint: {"center_y": .5, "center_x": .4}
-            on_release: root.current = "map"
-
+            pos_hint: {"center_y": .5, "center_x": .9}
+            on_release: root.current = "screen1"
+    
