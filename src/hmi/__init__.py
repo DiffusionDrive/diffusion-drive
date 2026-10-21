@@ -28,30 +28,42 @@ from kivymd.uix.relativelayout import MDRelativeLayout
 from kivy.lang import Builder
 from kivy.uix.screenmanager import ScreenManager, Screen, FadeTransition
 
+from kivy.clock import Clock
+
 Window.size = (375,667)
 Window.clearcolor = (200/255.0, 255/255.0, 151/255.0, 0.6)
 
-class MainScreen(Screen):
+class MainScreen(Screen): # map screen (home page)
     pass
 
-class Screen1(Screen):
+class Screen1(Screen): # goto (end goal) screen
     def press(self):
         goto = self.ids.goto_input.text
         print(goto)
 
         self.ids.goto_input.text = ''
 
-class Screen2(Screen):
+class Screen2(Screen): # from (start goal) screen
     def press(self):
         here = self.ids.from_input.text
         print(here)
 
         self.ids.from_input.text = ''
 
-class Screen3(Screen):
+class Screen3(Screen): # mark (two goal confirmation) screen <to have initial planned route shown>
     pass
 
-class Screen4(Screen):
+class Screen4(Screen): # moving (progress + detours (if any)) screen
+    def next(self, dt):
+        current = self.ids.my_progress_bar.value
+        if current < 1:
+            current += 0.01
+            self.ids.my_progress_bar.value = current
+    
+    def start_timer(self):
+        Clock.schedule_interval(self.next, 1/25)
+
+class Screen5(Screen): # reached (confirmation (successful run)) screen, can loop back to 'map' home page
     pass
 
 class ScreenManagement(ScreenManager):

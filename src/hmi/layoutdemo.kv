@@ -4,6 +4,7 @@ ScreenManagement:
     Screen2:
     Screen3:
     Screen4:
+    Screen5:
 
 <Button>
     font_size: 16
@@ -93,9 +94,40 @@ ScreenManagement:
     Button:
         text: "Start Travel"
         pos_hint: {"x":.8, "top":1}
-        on_press: app.root.current = 'reached'
+        on_press: app.root.current = 'moving'
 
 <Screen4>:
+    name: 'moving'
+    MapView:
+        lat: 52.52
+        lon: 13.405
+        zoom: 16
+
+        MapMarkerPopup:
+            lat: 52.5195
+            lon: 13.403
+
+            popup_size:dp(230),dp(130)
+    
+        MapMarkerPopup:
+            source: "goto.png"
+            lat: 52.522
+            lon: 13.406
+
+            popup_size:dp(230),dp(130)
+
+    ProgressBar:
+        id: my_progress_bar
+        min: 0
+        max: 1
+        pos_hint: {'x':.1}
+        size_hint_x: .8
+
+    Button:
+        text: "Moving"
+        on_press: root.start_timer()
+
+<Screen5>:
     name: 'reached'
     MapView:
         lat: 52.52
