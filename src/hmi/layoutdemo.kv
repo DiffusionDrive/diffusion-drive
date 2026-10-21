@@ -3,15 +3,15 @@ ScreenManagement:
     Screen1:
     Screen2:
     Screen3:
+    Screen4:
 
 <Button>
     font_size: 16
     size_hint: (0.2, 0.2)
 
 <MainScreen>:
-
+    name: 'map'
     FloatLayout:
-        name: 'map'
         size: root.width, root.height
 
         MapView:
@@ -68,10 +68,10 @@ ScreenManagement:
         text: 'Submit'
         pos_hint: {"x":.8, "top":0.8}
         on_press: root.press()
-        on_press: app.root.current = 'map_mark'
+        on_press: app.root.current = 'mark'
 
 <Screen3>:
-    name: 'map_mark'
+    name: 'mark'
     MapView:
         lat: 52.52
         lon: 13.405
@@ -84,13 +84,32 @@ ScreenManagement:
             popup_size:dp(230),dp(130)
     
         MapMarkerPopup:
-            source: "location.png"
+            source: "goto.png"
             lat: 52.522
             lon: 13.406
 
             popup_size:dp(230),dp(130)
     
     Button:
-        text: "Top Right"
+        text: "Start Travel"
         pos_hint: {"x":.8, "top":1}
-        on_press: app.root.current = 'goto'
+        on_press: app.root.current = 'reached'
+
+<Screen4>:
+    name: 'reached'
+    MapView:
+        lat: 52.52
+        lon: 13.405
+        zoom: 16
+    
+        MapMarkerPopup:
+            source: "reached.png"
+            lat: 52.522
+            lon: 13.406
+
+            popup_size:dp(230),dp(130)
+    
+    Button:
+        text: "Home Page"
+        pos_hint: {"x":.8, "top":1}
+        on_press: app.root.current = 'map'

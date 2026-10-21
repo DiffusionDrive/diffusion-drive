@@ -7,8 +7,11 @@
 # https://www.findlatitudeandlongitude.com/l/Nus+Singapore/4993767/#google_vignette 
 # to find NUS lat and lon
 
-# https://www.cleanpng.com/png-cartodb-map-location-mxwaty/#google_vignette
+# https://www.cleanpng.com/png-logo-brand-coupon-code-business-location-icon-dvlxs3/
 # goto map marker
+
+# https://www.cleanpng.com/png-computer-icons-clip-art-vector-graphics-portable-n-4i929o/
+# reached map marker
 
 from kivymd.app import MDApp ##
 
@@ -46,6 +49,9 @@ class Screen2(Screen):
         self.ids.from_input.text = ''
 
 class Screen3(Screen):
+    pass
+
+class Screen4(Screen):
     pass
 
 class ScreenManagement(ScreenManager):
