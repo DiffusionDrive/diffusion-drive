@@ -7,7 +7,8 @@
 # https://www.findlatitudeandlongitude.com/l/Nus+Singapore/4993767/#google_vignette 
 # to find NUS lat and lon
 
-# <a href="https://www.flaticon.com/free-icons/location" title="location icons">Location icons created by MEDZ - Flaticon</a>
+# https://www.cleanpng.com/png-cartodb-map-location-mxwaty/#google_vignette
+# goto map marker
 
 from kivymd.app import MDApp ##
 
