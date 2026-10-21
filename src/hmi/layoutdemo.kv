@@ -1,91 +1,37 @@
-#: import MapSource kivy_garden.mapview.MapSource
-#: import MDTextField kivymd.uix.textfield.textfield.MDTextField
-#: import Validator kivymd.uix.textfield.textfield.Validator
+ScreenManagement:
+    MainScreen:
+    Screen1:
+    Screen2:
+    Screen3:
+	
+<MainScreen>:
+    name: 'main'
 
-<Demo>:
-    Screen:
-        name: "map"
-        MapView:
-            lat: 52.52
-            lon: 13.405
-            zoom: 16
-
-        MDButton:
-            text: "go to screen 1"
-            pos_hint: {"center_y": .5, "center_x": .9}
-            on_release: root.current = "screen1"
-    
-    Screen:
-        name: "screen1"
-
-        MDLabel:
-            text: 'Where would you like to go?'
-            halign: 'center'
-
-        MDTextField:
-            mode: "filled"
-            text: "Enter location"
-            MDTextFieldLeadingIcon:
-                icon: "magnify"
-
-        MDButton:
-            text: "NEXT"
-            pos_hint: {"center_y": .5, "center_x": .9}
-            on_release: root.current = "screen2"
-
-    Screen:
-        name: "screen2"
-
-        MDLabel:
-            text: 'Where are you from?'
-            halign: 'center'
-
-        MDTextField:
-            mode: "filled"
-            text: "Enter location"
-            MDTextFieldLeadingIcon:
-                icon: "magnify"
-
-        MDButton:
-            text: "LET'S GO"
-            pos_hint: {"center_y": .5, "center_x": .9}
-            on_release: root.current = "map_points"
-
-    Screen:
-        name: "map_points"
-        MapView:
-            lat: 52.52
-            lon: 13.405
-            zoom: 16
+    Button:
+        on_release: app.root.current = 'goto'
+        text: 'Another Screen'
+        font_size: 50
             
-            MapMarkerPopup:
-                lat: 52.52
-                lon: 13.405
+<Screen1>:
+    name: 'goto'
 
-                popup_size:dp(230),dp(130)
-                Bubble:
-                    MDBoxLayout:
-                        padding: "4dp"
-                        MDLabel:
-                            text: "You in here"
-                            markup: True
-                            halign: "center"
+    Button:
+        on_release: app.root.current = 'from'
+        text: 'goto'
+        font_size: 50
 
-            MapMarkerPopup:
-                lat: 52.522
-                lon: 13.406
+<Screen2>:
+    name: 'from'
 
-                popup_size:dp(230),dp(130)
-                Bubble:
-                    MDBoxLayout:
-                        padding: "4dp"
-                        MDLabel:
-                            text: "You in here 2"
-                            markup: True
-                            halign: "center"
+    Button:
+        on_release: app.root.current = 'main_mark'
+        text: 'from'
+        font_size: 50
 
-        MDButton:
-            text: "go to screen 1"
-            pos_hint: {"center_y": .5, "center_x": .9}
-            on_release: root.current = "screen1"
-    
+<Screen3>:
+    name: 'main_mark'
+
+    Button:
+        on_release: app.root.current = 'goto'
+        text: 'main_mark'
+        font_size: 50
