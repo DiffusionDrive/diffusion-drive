@@ -1,91 +1,91 @@
-#: import MapSource kivy_garden.mapview.MapSource
-#: import MDTextField kivymd.uix.textfield.textfield.MDTextField
-#: import Validator kivymd.uix.textfield.textfield.Validator
+ScreenManagement:
+    MainScreen:
+    Screen1:
+    Screen2:
+    Screen3:
 
-<Demo>:
-    Screen:
-        name: "map"
+<Button>
+    font_size: 16
+    size_hint: (0.2, 0.2)
+
+<MainScreen>:
+
+    FloatLayout:
+        name: 'map'
+        size: root.width, root.height
+
         MapView:
             lat: 52.52
             lon: 13.405
             zoom: 16
 
-        MDButton:
-            text: "go to screen 1"
-            pos_hint: {"center_y": .5, "center_x": .9}
-            on_release: root.current = "screen1"
-    
-    Screen:
-        name: "screen1"
+        Button:
+            text: "Top Left"
+            pos_hint: {"x":0, "top":1}
 
-        MDLabel:
-            text: 'Where would you like to go?'
-            halign: 'center'
-
-        MDTextField:
-            mode: "filled"
-            text: "Enter location"
-            MDTextFieldLeadingIcon:
-                icon: "magnify"
-
-        MDButton:
-            text: "NEXT"
-            pos_hint: {"center_y": .5, "center_x": .9}
-            on_release: root.current = "screen2"
-
-    Screen:
-        name: "screen2"
-
-        MDLabel:
-            text: 'Where are you from?'
-            halign: 'center'
-
-        MDTextField:
-            mode: "filled"
-            text: "Enter location"
-            MDTextFieldLeadingIcon:
-                icon: "magnify"
-
-        MDButton:
-            text: "LET'S GO"
-            pos_hint: {"center_y": .5, "center_x": .9}
-            on_release: root.current = "map_points"
-
-    Screen:
-        name: "map_points"
-        MapView:
-            lat: 52.52
-            lon: 13.405
-            zoom: 16
+        Button:
+            text: "Top Right"
+            pos_hint: {"x":.8, "top":1}
+            on_release: app.root.current = 'goto'
             
-            MapMarkerPopup:
-                lat: 52.52
-                lon: 13.405
+<Screen1>:
+    name: 'goto'
+    size: root.width, root.height
 
-                popup_size:dp(230),dp(130)
-                Bubble:
-                    MDBoxLayout:
-                        padding: "4dp"
-                        MDLabel:
-                            text: "You in here"
-                            markup: True
-                            halign: "center"
+    Label:
+        id: goto_label
+        text: "Where to go?"
+        color: "black"
+        font_size: 32
 
-            MapMarkerPopup:
-                lat: 52.522
-                lon: 13.406
+    TextInput:
+        id: goto_input
+        multiline: False
+        size_hint: (1, .2)
 
-                popup_size:dp(230),dp(130)
-                Bubble:
-                    MDBoxLayout:
-                        padding: "4dp"
-                        MDLabel:
-                            text: "You in here 2"
-                            markup: True
-                            halign: "center"
+    Button:
+        text: 'Submit'
+        pos_hint: {"x":.8, "top":0.8}
+        on_press: root.press()
+        on_release: app.root.current = 'from'
 
-        MDButton:
-            text: "go to screen 1"
-            pos_hint: {"center_y": .5, "center_x": .9}
-            on_release: root.current = "screen1"
+<Screen2>:
+    name: 'from'
+    size: root.width, root.height
+
+    Label:
+        id: from_label
+        text: "Where are you?"
+        color: "black"
+        font_size: 32
+
+    TextInput:
+        id: from_input
+        multiline: False
+        size_hint: (1, .2)
+
+    Button:
+        text: 'Submit'
+        pos_hint: {"x":.8, "top":0.8}
+        on_press: root.press()
+        on_release: app.root.current = 'map_mark'
+
+<Screen3>:
+    name: 'map_mark'
+    MapView:
+        lat: 52.52
+        lon: 13.405
+        zoom: 16
+
+        MapMarkerPopup:
+            lat: 52.52
+            lon: 13.403
+
+            popup_size:dp(230),dp(130)
+    
+        MapMarkerPopup:
+            lat: 52.52
+            lon: 13.406
+
+            popup_size:dp(230),dp(130)
     

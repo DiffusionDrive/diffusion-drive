@@ -1,0 +1,14 @@
+#:import MapView kivy_garden.mapview.Mapview
+
+MapView:
+    lat: 52.52
+    lon: 13.405
+    zoom: 16
+    double_tap_zoom: True
+    on_lat:
+        print('lat', self.lat)
+    on_lon:
+        print('lon', self.lon)
+    MapMarkerPopup:
+        lat: 52.522
+        lon: 13.406
