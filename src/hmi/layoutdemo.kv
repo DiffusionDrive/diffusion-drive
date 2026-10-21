@@ -11,24 +11,40 @@
 
         MDButton:
             text: "go to screen 1"
-            pos_hint: {"center_y": .5, "center_x": .1}
+            pos_hint: {"center_y": .5, "center_x": .9}
             on_release: root.current = "screen1"
     
     Screen:
         name: "screen1"
+
         MDLabel:
-            text: 'screen1'
+            text: 'Where would you like to go?'
             halign: 'center'
+
+        MDTextField:
+            mode: "filled"
+            text: "Enter location"
+            MDTextFieldLeadingIcon:
+                icon: "magnify"
+
         MDButton:
-            text: "go to screen 2"
-            pos_hint: {"center_y": .5, "center_x": .4}
+            text: "NEXT"
+            pos_hint: {"center_y": .5, "center_x": .9}
             on_release: root.current = "screen2"
 
     Screen:
         name: "screen2"
+
         MDLabel:
-            text: 'screen2'
+            text: 'Where are you from?'
             halign: 'center'
+
+        MDTextField:
+            mode: "filled"
+            text: "Enter location"
+            MDTextFieldLeadingIcon:
+                icon: "magnify"
+
         MDButton:
             text: "LET'S GO"
             pos_hint: {"center_y": .5, "center_x": .9}
