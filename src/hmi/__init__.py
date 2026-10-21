@@ -36,10 +36,14 @@ class Screen1(Screen):
         goto = self.ids.goto_input.text
         print(goto)
 
+        self.ids.goto_input.text = ''
+
 class Screen2(Screen):
     def press(self):
         here = self.ids.from_input.text
         print(here)
+
+        self.ids.from_input.text = ''
 
 class Screen3(Screen):
     pass
