@@ -5,8 +5,8 @@ ScreenManagement:
     Screen3:
 
 <Button>
-    font_size: 24
-    size_hint: (0.3, 0.3)
+    font_size: 16
+    size_hint: (0.2, 0.2)
 
 <MainScreen>:
 
@@ -25,7 +25,7 @@ ScreenManagement:
 
         Button:
             text: "Top Right"
-            pos_hint: {"x":.7, "top":1}
+            pos_hint: {"x":.8, "top":1}
             on_release: app.root.current = 'goto'
             
 <Screen1>:
@@ -33,17 +33,20 @@ ScreenManagement:
     size: root.width, root.height
 
     Label:
+        id: goto_label
         text: "Where to go?"
         color: "black"
         font_size: 32
 
     TextInput:
+        id: goto_input
         multiline: False
         size_hint: (1, .2)
 
     Button:
         text: 'Submit'
-        pos_hint: {"x":.7, "top":1}
+        pos_hint: {"x":.8, "top":0.8}
+        on_press: root.press()
         on_release: app.root.current = 'from'
 
 <Screen2>:
@@ -51,17 +54,20 @@ ScreenManagement:
     size: root.width, root.height
 
     Label:
+        id: from_label
         text: "Where are you?"
         color: "black"
         font_size: 32
 
     TextInput:
+        id: from_input
         multiline: False
         size_hint: (1, .2)
 
     Button:
         text: 'Submit'
-        pos_hint: {"x":.7, "top":1}
+        pos_hint: {"x":.8, "top":0.8}
+        on_press: root.press()
         on_release: app.root.current = 'map_mark'
 
 <Screen3>:

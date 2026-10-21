@@ -31,10 +31,14 @@ class MainScreen(Screen):
     pass
 
 class Screen1(Screen):
-    pass
+    def press(self):
+        goto = self.ids.goto_input.text
+        print(goto)
 
 class Screen2(Screen):
-    pass
+    def press(self):
+        here = self.ids.from_input.text
+        print(here)
 
 class Screen3(Screen):
     pass
