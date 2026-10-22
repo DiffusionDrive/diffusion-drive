@@ -1,6 +1,7 @@
 import os
 import glob
 import torch
+import numpy as np
 from commonroad.common.file_reader import CommonRoadFileReader
 from src.planner.flow_planner.adapter import FlowPlannerCommonRoadAdapter
 
@@ -58,6 +59,24 @@ def test_run():
     plt.legend()
     plt.title("Flow-Planner")
     plt.show()
+
+    model_dt = 0.1
+
+    step_distances = np.linalg.norm(
+        np.diff(planned_trajectory[:, :2], axis=0),
+        axis=1
+    )
+
+    speeds = step_distances / model_dt
+    times = np.arange(1, len(planned_trajectory)) * model_dt
+
+    plt.figure(figsize=(9, 4))
+    plt.plot(times, speeds, label="Flow-Planner predicted speed")
+    plt.axhline(
+        y=planning_problem.initial_state.velocity,
+        linestyle="--",
+        label="CommonRoad initial speed"
+    )
 
 if __name__ == "__main__":
     test_run()

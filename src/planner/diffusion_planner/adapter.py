@@ -48,12 +48,6 @@ def extract_map_tensors(scenario, planning_problem, max_lanes=70, points_per_lan
             dx = center[j + 1, 0] - cx if j < points_per_lane - 1 else cx - center[j - 1, 0]
             dy = center[j + 1, 1] - cy if j < points_per_lane - 1 else cy - center[j - 1, 1]
 
-            # Normalize tangent vector to unit length [cos(theta), sin(theta)]
-            norm = np.hypot(dx, dy)
-            if norm > 1e-5:
-                dx /= norm
-                dy /= norm
-
             lx, ly = left[j]
             rx, ry = right[j]
 
@@ -85,8 +79,14 @@ def extract_neighbor_tensors(scenario, current_time_step=0, max_agents=32, time_
             type_one_hot = [0.0, 0.0, 1.0]
 
         start_step = current_time_step - time_len + 1
-        for t_idx, t in enumerate(range(start_step, current_time_step + 1)):
-            state = obs.state_at_time(t)
+        # At scenario timestep zero, real history does not exist. Use the earliest
+        # observable state as a stationary-history approximation, not zero padding.
+        # Never use a state from the future relative to current_time_step.
+        available_states = [obs.state_at_time(t) for t in range(start_step, current_time_step + 1)]
+        earliest = next((state for state in available_states if state is not None), None)
+        for t_idx, state in enumerate(available_states):
+            if state is None and earliest is not None:
+                state = earliest
             if state is not None:
                 x, y = state.position
                 yaw = getattr(state, "orientation", 0.0)
@@ -175,12 +175,6 @@ def extract_navigation_route(scenario, planning_problem, max_route_lanes=25, poi
                     dx = center[j + 1, 0] - cx if j < points_per_lane - 1 else cx - center[j - 1, 0]
                     dy = center[j + 1, 1] - cy if j < points_per_lane - 1 else cy - center[j - 1, 1]
 
-                    # Normalize tangent vector to unit length [cos(theta), sin(theta)]
-                    norm = np.hypot(dx, dy)
-                    if norm > 1e-5:
-                        dx /= norm
-                        dy /= norm
-
                     lx, ly = left[j]
                     rx, ry = right[j]
 
@@ -192,13 +186,18 @@ def extract_navigation_route(scenario, planning_problem, max_route_lanes=25, poi
                 route_speed_limit[i, 0] = 15.0
                 route_has_speed_limit[i, 0] = True
 
-            # Fill remaining route slots with the target goal lanelet
-            if 0 < num_lanes < max_route_lanes:
-                last_idx = min(num_lanes - 1, max_route_lanes - 1)
-                for i in range(num_lanes, max_route_lanes):
-                    route_lanes[i] = route_lanes[last_idx].copy()
-                    route_speed_limit[i] = route_speed_limit[last_idx].copy()
-                    route_has_speed_limit[i] = route_has_speed_limit[last_idx].copy()
+
+            # Leave unused route slots zero-padded.
+            # The route encoder detects empty slots from their geometry.
+            valid_route_count = min(num_lanes, max_route_lanes)
+
+            print(
+                f"[ROUTE] Actual lanelets: {num_lanes}, "
+                f"encoded: {valid_route_count}, "
+                f"padding: {max_route_lanes - valid_route_count}"
+            )
+            print(f"[ROUTE] Lanelet IDs: {route_lanelet_ids}")
+
     except Exception as e:
         print(f"Route extraction notice: {e}")
 

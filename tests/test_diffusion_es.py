@@ -34,6 +34,19 @@ class MockVectorMap:
         self.traffic_light_data = traffic_lights # One-hot encoding of traffic light status
         self.availabilities = masks # Boolean indicator of whether feature data is available or zero-padded
 
+import random
+
+seed = 42
+
+random.seed(seed)
+np.random.seed(seed)
+torch.manual_seed(seed)
+
+if torch.cuda.is_available():
+    torch.cuda.manual_seed_all(seed)
+
+print("[SEED] Random seed:", seed)
+
 def test_model():
     print("1. Loading DEU_Flensburg-41_1_T-1.xml...")
     xml_path = os.path.join(project_root, "data", "scenarios", "DEU_Flensburg-41_1_T-1.xml")
@@ -91,6 +104,12 @@ def test_model():
     ego_history = to_ego_centric_kinematics(ego_history)
     agent_data = to_ego_centric_kinematics(agent_data)
 
+    agent_data = torch.where(
+        agent_masks.unsqueeze(-1),
+        agent_data,
+        torch.zeros_like(agent_data)
+    )
+
     print("4. Loading Model and Weights...")
     from omegaconf import OmegaConf
     from src.planner.diffusion_es.nuplan_devkit.nuplan.planning.script.builders.model_builder import build_torch_module_wrapper
@@ -126,8 +145,23 @@ def test_model():
         for k, v in state_dict.items()
     }
 
-    model.load_state_dict(clean_state_dict, strict=False)
+    result = model.load_state_dict(
+        clean_state_dict,
+        strict=False
+    )
+
+    print("Missing keys:", result.missing_keys)
+    print("Unexpected keys:", result.unexpected_keys)
+
     model.eval()
+
+    # Enable evolutionary sampling with multiple candidates
+    model.predictions_per_sample = 64
+
+    print(
+        "[DIFFUSION-ES] Predictions per sample:",
+        model.predictions_per_sample
+    )
 
     print("5. Running Forward Pass...")
 
@@ -142,25 +176,47 @@ def test_model():
     goal_y_ego = dx_g * sin_inv + dy_g * cos_inv
     goal_tensor = torch.tensor([goal_x_ego, goal_y_ego], dtype=torch.float32)
 
+
+    constraint_calls = {"count": 0}
     # Goal-Reaching Cost for Diffusion-ES Guidance
     def goal_constraint(trajectory):
-        """
-        trajectory: [Batch_Size, 48] or [Batch_Size, Horizon, 3]
-        """
-        # Ensure tensor is reshaped to [Batch_Size, Horizon, 3]
         if trajectory.ndim == 2:
-            trajectory = trajectory.reshape(trajectory.shape[0], -1, 3)
+            trajectory = trajectory.reshape(
+                trajectory.shape[0], -1, 3
+            )
 
         batch_size = trajectory.shape[0]
 
-        # Distance from final predicted pose (timestep -1) to target box center
-        final_poses = trajectory[:, -1, :2]  # [Batch_Size, 2]
-        dist_to_goal = torch.norm(final_poses - goal_tensor.to(trajectory.device), dim=-1)
+        final_poses = trajectory[:, -1, :2]
 
-        # Scale cost weight to guide sampling optimization
+        dist_to_goal = torch.linalg.norm(
+            final_poses - goal_tensor.to(
+                device=trajectory.device,
+                dtype=trajectory.dtype
+            ),
+            dim=-1
+        )
+
         cost = dist_to_goal * 10.0
 
-        info = {"traj_sim": torch.zeros((batch_size, 3), device=trajectory.device)}
+        constraint_calls["count"] += 1
+
+        if constraint_calls["count"] <= 3:
+            print(
+                f"[CONSTRAINT] Call {constraint_calls['count']}: "
+                f"Candidates={batch_size}, "
+                f"Min cost={cost.min().item():.3f}, "
+                f"Mean cost={cost.mean().item():.3f}, "
+                f"Max cost={cost.max().item():.3f}"
+            )
+
+        info = {
+            "traj_sim": torch.zeros(
+                (batch_size, 3),
+                device=trajectory.device
+            )
+        }
+
         return cost, info
 
     features = {
@@ -171,6 +227,118 @@ def test_model():
 
     with torch.no_grad():
         output = model.run_diffusion_es(features)
+
+    print(
+        "[CONSTRAINT] Total evaluations:",
+        constraint_calls["count"]
+    )
+
+    raw_trajectories = (
+        output["multimodal_trajectories"]
+        .data
+        .detach()
+        .cpu()
+        .numpy()
+    )
+
+    multimodal_trajectories = raw_trajectories.reshape(-1, 16, 3)
+
+    # Evaluate every returned candidate against the goal
+    goal_xy = goal_tensor.detach().cpu().numpy()
+
+    final_positions = multimodal_trajectories[:, -1, :2]
+
+    goal_distances = np.linalg.norm(
+        final_positions - goal_xy[None, :],
+        axis=1
+    )
+
+    # Select candidate with minimum final goal distance
+    best_idx = int(np.argmin(goal_distances))
+
+    local_traj = multimodal_trajectories[best_idx]
+
+    print("\n========== CANDIDATE SELECTION ==========")
+    print("Number of candidates:", len(multimodal_trajectories))
+    print("Best candidate index:", best_idx)
+    print("Best goal distance:", goal_distances[best_idx])
+    print("Mean goal distance:", goal_distances.mean())
+    print("Worst goal distance:", goal_distances.max())
+    print("=========================================\n")
+
+    print("\n========== LOCAL TRAJECTORY DIAGNOSTICS ==========")
+    print("Raw output shape:", raw_trajectories.shape)
+    print("Reshaped output shape:", multimodal_trajectories.shape)
+    print("First trajectory shape:", local_traj.shape)
+    print("First predicted pose:", local_traj[0])
+    print("Final predicted pose:", local_traj[-1])
+    print("Local goal:", goal_tensor.numpy())
+
+    final_xy = local_traj[-1, :2]
+    goal_xy = goal_tensor.detach().cpu().numpy()
+
+    selected_goal_distance = np.linalg.norm(
+        final_xy - goal_xy
+    )
+
+    print("\n========== SELECTED TRAJECTORY ==========")
+    print("Selected endpoint:", final_xy)
+    print("Goal:", goal_xy)
+    print("Selected goal distance:", selected_goal_distance)
+    print("Selected goal cost:", selected_goal_distance * 10.0)
+    print("=========================================\n")
+
+    # Measure progress and lateral deviation in the ego frame
+    forward_displacement = (
+            local_traj[-1, 0] - local_traj[0, 0]
+    )
+
+    lateral_displacement = (
+            local_traj[-1, 1] - local_traj[0, 1]
+    )
+
+    goal_distance = np.linalg.norm(
+        local_traj[-1, :2] - goal_tensor.numpy()
+    )
+
+    print("Forward displacement:", forward_displacement)
+    print("Lateral displacement:", lateral_displacement)
+    print("Final distance to goal:", goal_distance)
+    print("==================================================\n")
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+
+    ax.plot(
+        local_traj[:, 0],
+        local_traj[:, 1],
+        "r-o",
+        label="Predicted trajectory"
+    )
+
+    ax.scatter(
+        goal_x_ego,
+        goal_y_ego,
+        c="orange",
+        s=150,
+        marker="X",
+        label="Goal center",
+        zorder=10
+    )
+
+    ax.arrow(
+        0, 0, 5, 0,
+        head_width=0.5,
+        color="green"
+    )
+
+    ax.set_xlabel("Local X (forward, m)")
+    ax.set_ylabel("Local Y (left, m)")
+    ax.set_title("Diffusion-ES Predicted Trajectory (Ego Frame)")
+    ax.axis("equal")
+    ax.grid(True)
+    ax.legend()
+
+    plt.show()
 
     print("6. Transforming Ego-Centric -> Global and Plotting Multimodal Spray...")
     cos_y, sin_y = np.cos(ego_yaw), np.sin(ego_yaw)
@@ -184,17 +352,58 @@ def test_model():
     raw_trajectories = output["multimodal_trajectories"].data.cpu().numpy()
     multimodal_trajectories = raw_trajectories.reshape(-1, 16, 3)
 
-    for idx in range(multimodal_trajectories.shape[0]):
-        pred = multimodal_trajectories[idx]
-        global_x = pred[:, 0] * cos_y - pred[:, 1] * sin_y + ego_x
-        global_y = pred[:, 0] * sin_y + pred[:, 1] * cos_y + ego_y
+    # Plot all candidate trajectories in blue
+    for idx, pred in enumerate(multimodal_trajectories):
 
-        # Plot the entire distribution spray generated by the diffusion model
-        color = 'blue' if idx > 0 else 'red'
-        alpha = 0.3 if idx > 0 else 0.8
-        plt.plot(global_x, global_y, color=color, linewidth=2, alpha=alpha, zorder=30)
+        global_x = (
+                pred[:, 0] * cos_y
+                - pred[:, 1] * sin_y
+                + ego_x
+        )
 
-    plt.title("CommonRoad + Conditional Diffusion-ES Multimodal Output")
+        global_y = (
+                pred[:, 0] * sin_y
+                + pred[:, 1] * cos_y
+                + ego_y
+        )
+
+        plt.plot(
+            global_x,
+            global_y,
+            color="blue",
+            linewidth=1,
+            alpha=0.12,
+            zorder=20
+        )
+
+    # Highlight the selected trajectory in red
+    best_pred = multimodal_trajectories[best_idx]
+
+    best_global_x = (
+            best_pred[:, 0] * cos_y
+            - best_pred[:, 1] * sin_y
+            + ego_x
+    )
+
+    best_global_y = (
+            best_pred[:, 0] * sin_y
+            + best_pred[:, 1] * cos_y
+            + ego_y
+    )
+
+    plt.plot(
+        best_global_x,
+        best_global_y,
+        color="red",
+        linewidth=3,
+        alpha=1.0,
+        label="Selected trajectory",
+        zorder=40
+    )
+
+    plt.legend()
+
+    plt.title("Conditional Diffusion-ES Multimodal Output")
     plt.show()
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 import os
 import torch
 import numpy as np
+from shapely.geometry import Point
 from hydra.utils import instantiate
 from commonroad.scenario.obstacle import ObstacleType
 
@@ -128,6 +129,21 @@ class FlowPlannerCommonRoadAdapter:
         lanes_has_speed_limit = np.zeros((max_lanes, 1), dtype=bool)
 
         lanelets = list(scenario.lanelet_network.lanelets)
+
+        # Select lanelets closest to the ego vehicle
+        ego_position = np.asarray(
+            self._map_ego_position, dtype=np.float32
+        )
+
+        lanelets.sort(
+            key=lambda lanelet: np.min(
+                np.linalg.norm(
+                    np.asarray(lanelet.center_vertices) - ego_position,
+                    axis=1
+                )
+            )
+        )
+
         num_lanes = min(len(lanelets), max_lanes)
 
         for i in range(num_lanes):
@@ -280,6 +296,11 @@ class FlowPlannerCommonRoadAdapter:
     # CORE INFERENCE LOGIC
     # =========================================================
     def _extract_inputs(self, scenario, planning_problem, current_step=0):
+        self._map_ego_position = np.asarray(
+            planning_problem.initial_state.position,
+            dtype=np.float32
+        )
+
         # Now calls its own internal private methods instead of importing them!
         lane_polylines, lanes_speed_limit, lanes_has_speed_limit = self._extract_map_tensors(scenario)
         neighbors_history = self._extract_neighbor_tensors(scenario, current_time_step=current_step)
@@ -305,6 +326,16 @@ class FlowPlannerCommonRoadAdapter:
         Executes ODE sampling to generate the planned trajectory in world coordinates.
         Output: (N_steps, 2) or (N_steps, 4) numpy trajectory.
         """
+        initial_state = planning_problem.initial_state
+
+        print("\n========== FLOW-PLANNER DIAGNOSTICS ==========")
+        print(f"Ego initial position: {initial_state.position}")
+        print(f"Ego initial orientation: {initial_state.orientation:.4f} rad")
+        print(f"Ego initial velocity: {initial_state.velocity:.4f} m/s")
+        print(f"Scenario dt: {scenario.dt:.4f} s")
+        print(f"Prediction horizon: {80 * scenario.dt:.2f} s")
+        print("==============================================\n")
+
         inputs, ego_world_state = self._extract_inputs(scenario, planning_problem, current_step)
 
         # Transform inputs into ego-centric coordinate frame
@@ -332,9 +363,21 @@ class FlowPlannerCommonRoadAdapter:
             if key in inputs and isinstance(inputs[key], torch.Tensor) and inputs[key].numel() > 0:
                 tensor = inputs[key].clone().to(self.device)
 
-                # 1. Translate Center X, Y (Always indices 0:2)
+                # 1. Identify valid entries before transforming
+                valid_mask = torch.any(tensor != 0, dim=-1)
+
                 xy_translated = tensor[..., :2] - ego_pos
-                tensor[..., :2] = torch.matmul(xy_translated, rot_matrix_inv.T)
+                xy_rotated = torch.matmul(
+                    xy_translated,
+                    rot_matrix_inv.T
+                )
+
+                # Preserve zero padding
+                tensor[..., :2] = torch.where(
+                    valid_mask.unsqueeze(-1),
+                    xy_rotated,
+                    torch.zeros_like(xy_rotated)
+                )
 
                 # 2. Rotate Direction/Heading vectors (Always indices 2:4 for all elements)
                 if tensor.shape[-1] >= 4:
@@ -387,11 +430,26 @@ class FlowPlannerCommonRoadAdapter:
         )
 
         if isinstance(planned_traj_ego, torch.Tensor):
-            planned_traj_ego = planned_traj_ego.cpu().numpy()
+            planned_traj_ego = planned_traj_ego.detach().cpu().numpy()
 
-        # Force the array into 2D shape: (Time_steps, Features)
-        # This removes any lingering Batch or Agent dimensions
-        planned_traj_ego = planned_traj_ego.reshape(-1, planned_traj_ego.shape[-1])
+        print("[DEBUG] Raw trajectory shape:", planned_traj_ego.shape)
+
+        # Expected: (batch, candidates, time, features)
+        if planned_traj_ego.ndim == 4:
+            planned_traj_ego = planned_traj_ego[0, 0]
+
+        # Expected: (batch, time, features)
+        elif planned_traj_ego.ndim == 3:
+            planned_traj_ego = planned_traj_ego[0]
+
+        elif planned_traj_ego.ndim != 2:
+            raise ValueError(
+                f"Unexpected trajectory shape: {planned_traj_ego.shape}"
+            )
+
+        assert planned_traj_ego.shape[-1] >= 2, (
+            "Trajectory must contain x and y coordinates."
+        )
 
         # Transform planned trajectory from ego-centric back to CommonRoad world coordinates:
         # [x_world, y_world]^T = R(yaw) * [x_ego, y_ego]^T + [ego_x, ego_y]^T
@@ -404,7 +462,49 @@ class FlowPlannerCommonRoadAdapter:
         xy_ego = planned_traj_ego[:, :2]
         xy_world = (rot_matrix @ xy_ego.T).T + np.array([ego_x, ego_y])
 
-        # --- STOP 20 STEPS AFTER ENTERING THE GOAL (ORANGE BOX) ---
+        step_distances = np.linalg.norm(
+            np.diff(xy_world, axis=0),
+            axis=1
+        )
+
+        total_distance = np.sum(step_distances)
+
+        print("\n========== TRAJECTORY MOTION ==========")
+        print(f"Total path length: {total_distance:.2f} m")
+        print(f"Average step distance: {np.mean(step_distances):.4f} m")
+        print(f"Maximum step distance: {np.max(step_distances):.4f} m")
+        print(f"Minimum step distance: {np.min(step_distances):.4f} m")
+        print("=======================================\n")
+
+        # ==========================================
+        # PREDICTED SPEED DIAGNOSTICS
+        # ==========================================
+
+        # Use the model's prediction timestep.
+        # 0.1 is appropriate only if Flow-Planner
+        # predicts one state every 0.1 seconds.
+        model_dt = 0.1
+
+        step_distances = np.linalg.norm(
+            np.diff(xy_world, axis=0),
+            axis=1
+        )
+
+        predicted_speeds = step_distances / model_dt
+
+        print("\n========== SPEED DIAGNOSTICS ==========")
+        print(f"Initial CommonRoad speed: {planning_problem.initial_state.velocity:.2f} m/s")
+        print(f"First predicted speed: {predicted_speeds[0]:.2f} m/s")
+        print(f"Mean predicted speed: {np.mean(predicted_speeds):.2f} m/s")
+        print(f"Last predicted speed: {predicted_speeds[-1]:.2f} m/s")
+
+        print("\nSpeed at selected prediction steps:")
+        for i in [0, 9, 19, 39, 59, 78]:
+            if i < len(predicted_speeds):
+                print(f"Step {i + 1:02d}: {predicted_speeds[i]:.2f} m/s")
+
+        print("=======================================\n")
+
         from shapely.geometry import Point
         from shapely.ops import unary_union
 
@@ -419,12 +519,58 @@ class FlowPlannerCommonRoadAdapter:
                     goal_poly = unary_union([s.shapely_object for s in pos.shapes if hasattr(s, "shapely_object")])
 
         if goal_poly is not None:
+
+            start_point = Point(
+                float(xy_world[0, 0]),
+                float(xy_world[0, 1])
+            )
+
+            end_point = Point(
+                float(xy_world[-1, 0]),
+                float(xy_world[-1, 1])
+            )
+
+            start_distance = start_point.distance(goal_poly)
+            end_distance = end_point.distance(goal_poly)
+
+            print("\n========== GOAL PROGRESS ==========")
+            print(f"Start distance to goal: {start_distance:.2f} m")
+            print(f"End distance to goal: {end_distance:.2f} m")
+            print(f"Distance reduction: {start_distance - end_distance:.2f} m")
+            print("===================================\n")
+
+        if goal_poly is not None:
+            goal_reached = False
+
             for i, pt in enumerate(xy_world):
-                # Detect the first step that enters or intersects the goal polygon
-                if goal_poly.intersects(Point(pt[0], pt[1])):
-                    # Allow 10 additional steps past the entry point (capped at total prediction length)
-                    stop_idx = min(i + 1 + 10, len(xy_world))
-                    xy_world = xy_world[:stop_idx]
+                point = Point(float(pt[0]), float(pt[1]))
+
+                if goal_poly.covers(point):
+                    # Stop immediately upon entering goal region
+                    xy_world = xy_world[:i + 1]
+                    goal_reached = True
+
+                    print(
+                        f"[FlowPlanner] Goal position reached "
+                        f"at trajectory step {i}"
+                    )
                     break
+
+            if not goal_reached:
+                final_point = Point(
+                    float(xy_world[-1, 0]),
+                    float(xy_world[-1, 1])
+                )
+
+                distance_to_goal = final_point.distance(goal_poly)
+
+                print(
+                    "[FlowPlanner] WARNING: Predicted trajectory "
+                    "did not enter the goal region."
+                )
+                print(
+                    f"[FlowPlanner] Final distance to goal: "
+                    f"{distance_to_goal:.2f} m"
+                )
 
         return xy_world

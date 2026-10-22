@@ -4,25 +4,31 @@ from typing import Tuple
 from commonroad.scenario.traffic_light import TrafficLightState
 from commonroad.scenario.lanelet import LaneletType
 
-def resample_polyline(polyline: np.ndarray, num_points: int = 20, ego_dir: np.ndarray = None) -> np.ndarray:
-    if len(polyline) == 0: return np.zeros((num_points, 2))
-    if len(polyline) == 1: return np.tile(polyline, (num_points, 1))
+def resample_polyline(polyline, num_points=20):
+    points = np.asarray(polyline, dtype=np.float32)
 
-    # Check if polyline direction is reversed relative to ego heading
-    if ego_dir is not None and len(polyline) >= 2:
-        poly_vec = polyline[-1] - polyline[0]
-        if np.dot(poly_vec, ego_dir) < 0:
-            polyline = polyline[::-1]  # Flip order to point forward
+    if len(points) == 0:
+        return np.zeros((num_points, 2), dtype=np.float32)
 
-    diffs = np.diff(polyline, axis=0)
-    dists = np.linalg.norm(diffs, axis=1)
-    cum_dists = np.concatenate(([0], np.cumsum(dists)))
-    if cum_dists[-1] == 0: return np.tile(polyline[0], (num_points, 1))
+    if len(points) == 1:
+        return np.repeat(points, num_points, axis=0)
 
-    target_dists = np.linspace(0, cum_dists[-1], num_points)
-    resampled_x = np.interp(target_dists, cum_dists, polyline[:, 0])
-    resampled_y = np.interp(target_dists, cum_dists, polyline[:, 1])
-    return np.column_stack((resampled_x, resampled_y))
+    distances = np.linalg.norm(np.diff(points, axis=0), axis=1)
+    cumulative = np.concatenate(([0.0], np.cumsum(distances)))
+
+    keep = np.concatenate(([True], np.diff(cumulative) > 1e-6))
+    cumulative = cumulative[keep]
+    points = points[keep]
+
+    if len(points) == 1:
+        return np.repeat(points, num_points, axis=0)
+
+    targets = np.linspace(0, cumulative[-1], num_points)
+
+    return np.stack([
+        np.interp(targets, cumulative, points[:, 0]),
+        np.interp(targets, cumulative, points[:, 1])
+    ], axis=-1).astype(np.float32)
 
 def extract_vector_map(scenario, planning_problem):
     points_per_element = 20
@@ -59,6 +65,22 @@ def extract_vector_map(scenario, planning_problem):
     else:
         raw_goal_lanelets.update(scenario.lanelet_network.find_lanelet_by_shape(goal_shape))
 
+    print("\n========== GOAL DIAGNOSTICS ==========")
+    print("Ego position:", ego_pos)
+    print("Ego heading:", ego_yaw)
+    print("Goal shape type:", type(goal_shape).__name__)
+    print("Goal shape center:", getattr(goal_shape, "center", None))
+    print("Raw goal lanelets:", sorted(raw_goal_lanelets))
+
+    for i, goal_state in enumerate(planning_problem.goal.state_list):
+        print(f"\nGoal state {i}:")
+        print("Position:", getattr(goal_state, "position", None))
+        print("Orientation:", getattr(goal_state, "orientation", None))
+        print("Velocity:", getattr(goal_state, "velocity", None))
+        print("Time step:", getattr(goal_state, "time_step", None))
+
+    print("======================================\n")
+
     # 3. Select single target lanelet aligned with Ego heading & furthest forward
     best_goal_id = None
     max_forward_dist = -float('inf')
@@ -81,54 +103,67 @@ def extract_vector_map(scenario, planning_problem):
     if best_goal_id is None and raw_goal_lanelets:
         best_goal_id = list(raw_goal_lanelets)[0]
 
-    # 4. BFS to find path from best_start_id to best_goal_id
+    # 3 and 4. Find a reachable goal lanelet using directed BFS
+    from collections import deque
+
     route_path = []
-    if best_start_id is not None and best_goal_id is not None:
-        queue = [[best_start_id]]
+    best_goal_id = None
+
+    if best_start_id is not None and raw_goal_lanelets:
+        queue = deque([[best_start_id]])
         visited = {best_start_id}
 
         while queue:
-            path = queue.pop(0)
-            curr_id = path[-1]
+            path = queue.popleft()
+            current_id = path[-1]
 
-            if curr_id == best_goal_id:
+            if current_id in raw_goal_lanelets:
                 route_path = path
+                best_goal_id = current_id
                 break
 
-            let = scenario.lanelet_network.find_lanelet_by_id(curr_id)
-            if let is not None:
-                for succ in let.successor:
-                    if succ not in visited:
-                        visited.add(succ)
-                        queue.append(path + [succ])
+            lanelet = scenario.lanelet_network.find_lanelet_by_id(
+                current_id
+            )
 
-    if not route_path and best_start_id is not None:
-        route_path = [best_start_id]
+            if lanelet is None:
+                continue
 
-    # 5. Extend route path beyond goal so guidance remains continuous
-    curr_id = route_path[-1] if route_path else best_start_id
-    while len(route_path) < 10 and curr_id is not None:
-        let = scenario.lanelet_network.find_lanelet_by_id(curr_id)
-        if let is None or not let.successor:
-            break
+            for successor_id in lanelet.successor:
+                if successor_id not in visited:
+                    visited.add(successor_id)
+                    queue.append(path + [successor_id])
 
-        best_succ = None
-        min_diff = float('inf')
-        for succ_id in let.successor:
-            succ_let = scenario.lanelet_network.find_lanelet_by_id(succ_id)
-            if succ_let is not None and len(succ_let.center_vertices) >= 2:
-                s_vec = succ_let.center_vertices[-1] - succ_let.center_vertices[0]
-                s_yaw = np.arctan2(s_vec[1], s_vec[0])
-                diff = np.abs(np.arctan2(np.sin(s_yaw - ego_yaw), np.cos(s_yaw - ego_yaw)))
-                if diff < min_diff:
-                    min_diff = diff
-                    best_succ = succ_id
+    if not route_path:
+        raise RuntimeError(
+            "No successor-connected route found from ego "
+            f"lanelet {best_start_id} to goal lanelets "
+            f"{sorted(raw_goal_lanelets)}"
+        )
 
-        if best_succ is not None and best_succ not in route_path:
-            route_path.append(best_succ)
-            curr_id = best_succ
-        else:
-            break
+    print("[ROUTE] Start lanelet:", best_start_id)
+    print("[ROUTE] Goal lanelet:", best_goal_id)
+    print("[ROUTE] Lanelet sequence:", route_path)
+
+    print("\n========== ROUTE DIAGNOSTICS ==========")
+    print("Start lanelet:", best_start_id)
+    print("Goal lanelet:", best_goal_id)
+    print("Route path:", route_path)
+
+    for lanelet_id in route_path:
+        lanelet = scenario.lanelet_network.find_lanelet_by_id(
+            lanelet_id
+        )
+
+        if lanelet is not None:
+            print(
+                f"Lanelet {lanelet_id}: "
+                f"successors={lanelet.successor}, "
+                f"start={lanelet.center_vertices[0]}, "
+                f"end={lanelet.center_vertices[-1]}"
+            )
+
+    print("=======================================\n")
 
     coords_dict = {
         'LANE': np.zeros((1, 30, points_per_element, 2), dtype=np.float32),
@@ -162,7 +197,7 @@ def extract_vector_map(scenario, planning_problem):
         if counters['ROUTE_LANES'] >= 30: break
         let = scenario.lanelet_network.find_lanelet_by_id(l_id)
         if let is not None:
-            coords_dict['ROUTE_LANES'][0, counters['ROUTE_LANES']] = resample_polyline(let.center_vertices, points_per_element, ego_dir=ego_dir)
+            coords_dict['ROUTE_LANES'][0, counters['ROUTE_LANES']] = resample_polyline(let.center_vertices, points_per_element)
             avails_dict['ROUTE_LANES'][0, counters['ROUTE_LANES']] = True
             tl_dict['ROUTE_LANES'][0, counters['ROUTE_LANES']] = get_tl_state(let)
             counters['ROUTE_LANES'] += 1
@@ -178,31 +213,31 @@ def extract_vector_map(scenario, planning_problem):
         tl_state_array = get_tl_state(let)
 
         if counters['LANE'] < 30:
-            coords_dict['LANE'][0, counters['LANE']] = resample_polyline(let.center_vertices, points_per_element, ego_dir=ego_dir)
+            coords_dict['LANE'][0, counters['LANE']] = resample_polyline(let.center_vertices, points_per_element)
             avails_dict['LANE'][0, counters['LANE']] = True
             tl_dict['LANE'][0, counters['LANE']] = tl_state_array
             counters['LANE'] += 1
 
         if counters['LEFT_BOUNDARY'] < 30 and let.left_vertices is not None:
-            coords_dict['LEFT_BOUNDARY'][0, counters['LEFT_BOUNDARY']] = resample_polyline(let.left_vertices, points_per_element, ego_dir=ego_dir)
+            coords_dict['LEFT_BOUNDARY'][0, counters['LEFT_BOUNDARY']] = resample_polyline(let.left_vertices, points_per_element)
             avails_dict['LEFT_BOUNDARY'][0, counters['LEFT_BOUNDARY']] = True
             tl_dict['LEFT_BOUNDARY'][0, counters['LEFT_BOUNDARY']] = tl_state_array
             counters['LEFT_BOUNDARY'] += 1
 
         if counters['RIGHT_BOUNDARY'] < 30 and let.right_vertices is not None:
-            coords_dict['RIGHT_BOUNDARY'][0, counters['RIGHT_BOUNDARY']] = resample_polyline(let.right_vertices, points_per_element, ego_dir=ego_dir)
+            coords_dict['RIGHT_BOUNDARY'][0, counters['RIGHT_BOUNDARY']] = resample_polyline(let.right_vertices, points_per_element)
             avails_dict['RIGHT_BOUNDARY'][0, counters['RIGHT_BOUNDARY']] = True
             tl_dict['RIGHT_BOUNDARY'][0, counters['RIGHT_BOUNDARY']] = tl_state_array
             counters['RIGHT_BOUNDARY'] += 1
 
         if counters['STOP_LINE'] < 20 and let.stop_line is not None:
             sl_pts = np.array([let.stop_line.start, let.stop_line.end])
-            coords_dict['STOP_LINE'][0, counters['STOP_LINE']] = resample_polyline(sl_pts, points_per_element, ego_dir=ego_dir)
+            coords_dict['STOP_LINE'][0, counters['STOP_LINE']] = resample_polyline(sl_pts, points_per_element)
             avails_dict['STOP_LINE'][0, counters['STOP_LINE']] = True
             counters['STOP_LINE'] += 1
 
         if counters['CROSSWALK'] < 20 and LaneletType.CROSSWALK in let.lanelet_type:
-            coords_dict['CROSSWALK'][0, counters['CROSSWALK']] = resample_polyline(let.center_vertices, points_per_element, ego_dir=ego_dir)
+            coords_dict['CROSSWALK'][0, counters['CROSSWALK']] = resample_polyline(let.center_vertices, points_per_element)
             avails_dict['CROSSWALK'][0, counters['CROSSWALK']] = True
             counters['CROSSWALK'] += 1
 
@@ -224,16 +259,12 @@ def extract_ego_history(planning_problem) -> torch.Tensor:
     state = planning_problem.initial_state
     x, y = state.position
     yaw = state.orientation
-
-    # Default to a nominal speed (e.g. 5.0 m/s) if initial velocity is 0
-    v = getattr(state, 'velocity', 0.0)
-    if v == 0.0:
-        v = 5.0
-
+    v = float(getattr(state, "velocity", 0.0))
     a = getattr(state, 'acceleration', 0.0)
-
     dt = 0.1
-    for i in range(5):
+
+    history_times = np.linspace(-1.5, 0.0, 5)
+    for i, time_offset in enumerate(history_times):
         time_offset = (i - 4) * dt
         history[0, i, 0] = x + (v * np.cos(yaw) * time_offset)
         history[0, i, 1] = y + (v * np.sin(yaw) * time_offset)

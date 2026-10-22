@@ -49,6 +49,14 @@ class ObservationNormalizer(nn.Module):
             tensor[mask] = (tensor[mask] - mean) / std
         return tensor
 
+    def _inverse_norm(self, tensor, mean, std):
+        if tensor is None or tensor.numel() == 0:
+            return tensor
+        mask = tensor.abs().sum(dim=-1) > 1e-5
+        if mask.any():
+            tensor[mask] = (tensor[mask] * std) + mean
+        return tensor
+
     def forward(self, inputs):
         normalized = {}
         if "ego_current_state" in inputs:
@@ -62,9 +70,52 @@ class ObservationNormalizer(nn.Module):
         if "static_objects" in inputs:
             normalized["static_objects"] = self._norm(inputs["static_objects"].clone(), self.stat_mean, self.stat_std)
 
-        # Retain boolean masks and scalar speed limits
+
+        # Normalize speed limits using checkpoint statistics.
+        if "lanes_speed_limit" in inputs:
+            normalized["lanes_speed_limit"] = (
+                    inputs["lanes_speed_limit"] / 20.0
+            )
+
+        if "route_lanes_speed_limit" in inputs:
+            normalized["route_lanes_speed_limit"] = (
+                    inputs["route_lanes_speed_limit"] / 20.0
+            )
+
+
         for k, v in inputs.items():
             if k not in normalized:
                 normalized[k] = v
 
         return normalized
+
+    def inverse(self, inputs):
+        denormalized = {}
+        if "ego_current_state" in inputs:
+            denormalized["ego_current_state"] = (inputs["ego_current_state"] * self.ego_std) + self.ego_mean
+        if "neighbor_agents_past" in inputs:
+            denormalized["neighbor_agents_past"] = self._inverse_norm(inputs["neighbor_agents_past"].clone(), self.neigh_mean, self.neigh_std)
+        if "lanes" in inputs:
+            denormalized["lanes"] = self._inverse_norm(inputs["lanes"].clone(), self.lane_mean, self.lane_std)
+        if "route_lanes" in inputs:
+            denormalized["route_lanes"] = self._inverse_norm(inputs["route_lanes"].clone(), self.lane_mean, self.lane_std)
+        if "static_objects" in inputs:
+            denormalized["static_objects"] = self._inverse_norm(inputs["static_objects"].clone(), self.stat_mean, self.stat_std)
+
+
+        if "lanes_speed_limit" in inputs:
+            denormalized["lanes_speed_limit"] = (
+                    inputs["lanes_speed_limit"] * 20.0
+            )
+
+        if "route_lanes_speed_limit" in inputs:
+            denormalized["route_lanes_speed_limit"] = (
+                    inputs["route_lanes_speed_limit"] * 20.0
+            )
+
+
+        for k, v in inputs.items():
+            if k not in denormalized:
+                denormalized[k] = v
+
+        return denormalized

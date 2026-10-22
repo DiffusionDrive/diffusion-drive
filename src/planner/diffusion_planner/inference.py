@@ -1,4 +1,6 @@
 import torch
+import json
+from pathlib import Path
 import numpy as np
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -9,14 +11,14 @@ from src.planner.diffusion_planner.normalizer import (
     StateNormalizer,
 )
 from src.planner.diffusion_planner.models.diffusion_planner import Diffusion_Planner
-
+from src.planner.diffusion_planner.guidance.guidance_wrapper import GuidanceWrapper
 
 @dataclass
 class PlannerConfig:
     """Configuration mapping for Diffusion Planner encoders and decoders."""
 
     # --- Decoder Configs ---
-    decoder_drop_path_rate: float = 0.3
+    decoder_drop_path_rate: float = 0.1
     predicted_neighbor_num: int = 10
     future_len: int = 80
     route_num: int = 25
@@ -30,7 +32,7 @@ class PlannerConfig:
 
     # --- Encoder Configs ---
     hidden_dim: int = 192
-    encoder_drop_path_rate: float = 0.3
+    encoder_drop_path_rate: float = 0.1
     encoder_depth: int = 3
     agent_num: int = 32
     static_objects_num: int = 5
@@ -44,7 +46,20 @@ class DiffusionPlannerNode:
     def __init__(self, checkpoint_path: str = None, device: str = "cuda"):
         self.device = torch.device(device if torch.cuda.is_available() else "cpu")
         self.config = PlannerConfig()
+        if checkpoint_path:
+            args_path = Path(checkpoint_path).with_name("args.json")
+            if args_path.exists():
+                with args_path.open(encoding="utf-8") as f:
+                    saved_args = json.load(f)
+                for key in ("encoder_drop_path_rate", "decoder_drop_path_rate",
+                            "future_len", "route_num", "lane_len", "decoder_depth",
+                            "num_heads", "hidden_dim", "encoder_depth", "agent_num",
+                            "static_objects_num", "lane_num", "time_len",
+                            "predicted_neighbor_num", "diffusion_model_type"):
+                    if key in saved_args:
+                        setattr(self.config, key, saved_args[key])
 
+        self.config.guidance_fn = None # GuidanceWrapper()
         self.model = Diffusion_Planner(self.config).to(self.device)
 
         if checkpoint_path:
@@ -67,8 +82,48 @@ class DiffusionPlannerNode:
                 clean_state_dict[new_key] = v
 
             # 4. Load the cleaned weights into the model
-            # strict=False allows it to load even if some non-critical keys (like normalizers) are missing
-            self.model.load_state_dict(clean_state_dict, strict=False)
+            # Load pretrained model weights
+            load_result = self.model.load_state_dict(
+                clean_state_dict,
+                strict=False
+            )
+
+            # Normalization statistics may be initialized directly
+            # inside normalizer.py rather than saved in the checkpoint.
+            allowed_missing_keys = {
+                "decoder.decoder._state_normalizer.mean",
+                "decoder.decoder._state_normalizer.std",
+                "decoder.decoder._observation_normalizer.ego_mean",
+                "decoder.decoder._observation_normalizer.ego_std",
+                "decoder.decoder._observation_normalizer.neigh_mean",
+                "decoder.decoder._observation_normalizer.neigh_std",
+                "decoder.decoder._observation_normalizer.lane_mean",
+                "decoder.decoder._observation_normalizer.lane_std",
+                "decoder.decoder._observation_normalizer.stat_mean",
+                "decoder.decoder._observation_normalizer.stat_std",
+            }
+
+            # Identify genuinely incompatible checkpoint parameters
+            critical_missing_keys = [
+                key for key in load_result.missing_keys
+                if key not in allowed_missing_keys
+            ]
+
+            if critical_missing_keys or load_result.unexpected_keys:
+                raise RuntimeError(
+                    "Checkpoint compatibility error:\n"
+                    f"Missing model parameters: {critical_missing_keys}\n"
+                    f"Unexpected parameters: {load_result.unexpected_keys}"
+                )
+
+            if load_result.missing_keys:
+                print(
+                    "[INFO] Normalization buffers not found in checkpoint. "
+                    "Using values initialized by normalizer.py."
+                )
+
+            print("[INFO] Pretrained Diffusion-Planner weights loaded successfully.")
+            print(f"Loaded {len(clean_state_dict)} checkpoint tensors successfully")
 
         self.model.eval()
         print(f"Diffusion Planner initialized on {self.device}")
