@@ -93,7 +93,7 @@ ScreenManagement:
     
     Button:
         text: "Start Travel"
-        pos_hint: {"x":.8, "top":1}
+        pos_hint: {"x":.8, "top":.8}
         on_press: app.root.current = 'moving'
 
 <Screen4>:
@@ -126,6 +126,11 @@ ScreenManagement:
     Button:
         text: "Moving"
         on_press: root.start_timer()
+
+    Button:
+        text: "End Travel"
+        pos_hint: {"x":.8, "top":.8}
+        on_press: app.root.current = 'reached'
 
 <Screen5>:
     name: 'reached'

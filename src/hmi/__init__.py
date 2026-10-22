@@ -17,14 +17,14 @@ from kivymd.app import MDApp ##
 
 from kivy.core.window import Window
 from kivy_garden.mapview import MapView, MapMarker, MapMarkerPopup, MarkerMapLayer, MapSource
-
+'''
 from kivy.uix.boxlayout import BoxLayout 
 from kivy.uix.textinput import TextInput 
 from kivymd.uix.label import MDLabel
 from kivymd.uix.widget import MDWidget
 from kivymd.uix.button import MDButton, MDButtonText
 from kivymd.uix.relativelayout import MDRelativeLayout
-
+'''
 from kivy.lang import Builder
 from kivy.uix.screenmanager import ScreenManager, Screen, FadeTransition
 
@@ -58,6 +58,9 @@ class Screen4(Screen): # moving (progress + detours (if any)) screen
         current = self.ids.my_progress_bar.value
         if current < 1:
             current += 0.01
+            self.ids.my_progress_bar.value = current
+        if current == 1:
+            current = 0
             self.ids.my_progress_bar.value = current
     
     def start_timer(self):
