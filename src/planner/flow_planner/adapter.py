@@ -1,7 +1,7 @@
 import os
 import torch
 import numpy as np
-from shapely.geometry import Point
+from shapely.geometry import Polygon, Point
 from hydra.utils import instantiate
 from commonroad.scenario.obstacle import ObstacleType
 
@@ -154,8 +154,20 @@ class FlowPlannerCommonRoadAdapter:
 
             for j in range(points_per_lane):
                 cx, cy = center[j]
-                dx = center[j + 1, 0] - cx if j < points_per_lane - 1 else cx - center[j - 1, 0]
-                dy = center[j + 1, 1] - cy if j < points_per_lane - 1 else cy - center[j - 1, 1]
+
+                if j < points_per_lane - 1:
+                    direction = center[j + 1] - center[j]
+                else:
+                    direction = center[j] - center[j - 1]
+
+                norm = np.linalg.norm(direction)
+
+                if norm > 1e-6:
+                    direction = direction / norm
+                else:
+                    direction = np.array([1.0, 0.0], dtype=np.float32)
+
+                dx, dy = direction
 
                 lx, ly = left[j]
                 rx, ry = right[j]
@@ -204,8 +216,12 @@ class FlowPlannerCommonRoadAdapter:
 
         return neighbors_history
 
-    def _extract_ego_state(self, planning_problem, current_time_step=0):
-        state = planning_problem.initial_state
+    def _extract_ego_state(self, planning_problem, current_time_step=0, ego_state=None):
+        state = (
+            ego_state
+            if ego_state is not None
+            else planning_problem.initial_state
+        )
         x, y = state.position
         yaw = getattr(state, "orientation", 0.0)
         vel = getattr(state, "velocity", 15.0)
@@ -228,6 +244,123 @@ class FlowPlannerCommonRoadAdapter:
         ego_state_array[12] = 1.0  # ego_type indicator
 
         return ego_state_array
+
+    def _build_debug_ego_history(
+            self,
+            planning_problem,
+            dt=0.1,
+            history_len=21,
+            ego_state=None
+    ):
+        """
+        Diagnostic constant-velocity ego history.
+
+        Output:
+            (history_len, 14)
+
+        Layout follows Flow-Planner ego_agent_past:
+            x, y, cos_h, sin_h,
+            vx, vy, ax, ay,
+            width, length, ego_type,
+            reserved, reserved, reserved
+        """
+
+        state = (
+            ego_state
+            if ego_state is not None
+            else planning_problem.initial_state
+        )
+
+        position = np.asarray(
+            state.position,
+            dtype=np.float32
+        )
+
+        heading = float(state.orientation)
+        speed = float(state.velocity)
+
+        vx = speed * np.cos(heading)
+        vy = speed * np.sin(heading)
+
+        history = np.zeros(
+            (history_len, 14),
+            dtype=np.float32
+        )
+
+        for i in range(history_len):
+            time_offset = (
+                                  i - history_len + 1
+                          ) * dt
+
+            history[i, 0] = position[0] + vx * time_offset
+            history[i, 1] = position[1] + vy * time_offset
+
+            history[i, 2] = np.cos(heading)
+            history[i, 3] = np.sin(heading)
+
+            history[i, 4] = vx
+            history[i, 5] = vy
+
+            history[i, 6] = 0.0
+            history[i, 7] = 0.0
+
+            history[i, 8] = 2.0
+            history[i, 9] = 4.5
+
+            history[i, 10] = 1.0
+
+        return history
+
+    def _estimate_obstacle_history(
+            self,
+            state,
+            history_len,
+            dt
+    ):
+        """
+        Reconstruct an approximate history using
+        constant-velocity backward extrapolation.
+
+        This is for debugging missing history,
+        not a replacement for observed states.
+        """
+
+        position = np.asarray(
+            state.position,
+            dtype=np.float32
+        )
+
+        orientation = float(state.orientation)
+        speed = float(state.velocity)
+
+        velocity = np.array([
+            speed * np.cos(orientation),
+            speed * np.sin(orientation)
+        ], dtype=np.float32)
+
+        positions = np.zeros(
+            (history_len, 2),
+            dtype=np.float32
+        )
+
+        velocities = np.zeros(
+            (history_len, 2),
+            dtype=np.float32
+        )
+
+        for i in range(history_len):
+
+            time_offset = (
+                                  i - history_len + 1
+                          ) * dt
+
+            positions[i] = (
+                    position + velocity * time_offset
+            )
+
+            velocities[i] = velocity
+
+        return positions, velocities
 
     def _extract_static_objects(self, scenario, max_static=5):
         static_tensor = np.zeros((max_static, 10), dtype=np.float32)
@@ -254,6 +387,44 @@ class FlowPlannerCommonRoadAdapter:
 
         return static_tensor
 
+    def _make_ego_polygon(
+            self,
+            position,
+            heading,
+            length=4.5,
+            width=2.0
+    ):
+        """
+        Construct the ego vehicle footprint in world coordinates.
+
+        Assumes position represents the vehicle's geometric center.
+        """
+
+        x, y = position
+
+        half_length = length / 2.0
+        half_width = width / 2.0
+
+        corners = np.array([
+            [ half_length,  half_width],
+            [ half_length, -half_width],
+            [-half_length, -half_width],
+            [-half_length,  half_width]
+        ])
+
+        c = np.cos(heading)
+        s = np.sin(heading)
+
+        rotation = np.array([
+            [c, -s],
+            [s,  c]
+        ])
+
+        world_corners = corners @ rotation.T
+        world_corners += np.array([x, y])
+
+        return Polygon(world_corners)
+
     def _extract_navigation_route(self, scenario, planning_problem, max_route_lanes=25, points_per_lane=20):
         from commonroad_route_planner.route_planner import RoutePlanner
 
@@ -277,11 +448,43 @@ class FlowPlannerCommonRoadAdapter:
 
             for j in range(points_per_lane):
                 cx, cy = center[j]
-                dx = center[j + 1, 0] - cx if j < points_per_lane - 1 else cx - center[j - 1, 0]
-                dy = center[j + 1, 1] - cy if j < points_per_lane - 1 else cy - center[j - 1, 1]
+
+                # ==========================================
+                # NORMALIZE ROUTE DIRECTION
+                # ==========================================
+
+                if j < points_per_lane - 1:
+                    direction = center[j + 1] - center[j]
+                else:
+                    direction = center[j] - center[j - 1]
+
+                norm = np.linalg.norm(direction)
+
+                if norm > 1e-6:
+                    direction = direction / norm
+                else:
+                    direction = np.array(
+                        [1.0, 0.0],
+                        dtype=np.float32
+                    )
+
+                dx, dy = direction
+
+                # ==========================================
+                # LEFT AND RIGHT BOUNDARIES
+                # ==========================================
 
                 lx, ly = left[j]
                 rx, ry = right[j]
+
+                route_tensor[i, j, 0:2] = [cx, cy]
+                route_tensor[i, j, 2:4] = [dx, dy]
+                route_tensor[i, j, 4:6] = [lx - cx, ly - cy]
+                route_tensor[i, j, 6:8] = [rx - cx, ry - cy]
+
+                route_tensor[i, j, 8:12] = [
+                    0.0, 0.0, 0.0, 1.0
+                ]
 
                 route_tensor[i, j, 0:2] = [cx, cy]
                 route_tensor[i, j, 2:4] = [dx, dy]
@@ -292,10 +495,296 @@ class FlowPlannerCommonRoadAdapter:
 
         return route_tensor
 
+    def _check_trajectory_collisions(
+            self,
+            scenario,
+            trajectory,
+            start_step,
+            initial_position,
+            ego_length=4.5,
+            ego_width=2.0
+    ):
+        """
+        Check predicted ego footprints against CommonRoad obstacles.
+
+        trajectory:
+            (N, 2) world-coordinate future positions
+
+        start_step:
+            Current CommonRoad timestep
+
+        Returns:
+            (is_collision_free, collision_step, obstacle_id)
+        """
+
+        trajectory = np.asarray(trajectory, dtype=float)
+        initial_position = np.asarray(initial_position, dtype=float)
+
+        for i, position in enumerate(trajectory):
+
+            # Prediction index 0 corresponds to start_step + 1
+            future_step = start_step + i + 1
+
+            previous_position = (
+                initial_position
+                if i == 0
+                else trajectory[i - 1]
+            )
+
+            direction = position - previous_position
+
+            if np.linalg.norm(direction) > 1e-6:
+                heading = np.arctan2(
+                    direction[1],
+                    direction[0]
+                )
+            else:
+                heading = 0.0
+
+            ego_polygon = self._make_ego_polygon(
+                position,
+                heading,
+                length=ego_length,
+                width=ego_width
+            )
+
+            for obstacle in (
+                    list(scenario.dynamic_obstacles)
+                    + list(scenario.static_obstacles)
+            ):
+
+                obstacle_occupancy = obstacle.occupancy_at_time(
+                    future_step
+                )
+
+                if obstacle_occupancy is None:
+                    continue
+
+                obstacle_shape = obstacle_occupancy.shape
+
+                if not hasattr(obstacle_shape, "shapely_object"):
+                    continue
+
+                obstacle_polygon = obstacle_shape.shapely_object
+
+                if ego_polygon.intersects(obstacle_polygon):
+                    return (
+                        False,
+                        future_step,
+                        obstacle.obstacle_id
+                    )
+
+        return True, None, None
+
+    def _check_road_boundaries(
+            self,
+            scenario,
+            trajectory,
+            initial_position,
+            ego_length=4.5,
+            ego_width=2.0
+    ):
+        """
+        Check whether the ego vehicle remains inside
+        the union of CommonRoad lanelet polygons.
+        """
+
+        from shapely.ops import unary_union
+
+        lane_polygons = []
+
+        for lanelet in scenario.lanelet_network.lanelets:
+
+            polygon = lanelet.polygon.shapely_object
+
+            if polygon is not None:
+                lane_polygons.append(polygon)
+
+        if not lane_polygons:
+            raise ValueError(
+                "No lanelet polygons available for road validation."
+            )
+
+        road_polygon = unary_union(lane_polygons)
+
+        trajectory = np.asarray(trajectory, dtype=float)
+        initial_position = np.asarray(initial_position, dtype=float)
+
+        for i, position in enumerate(trajectory):
+
+            previous_position = (
+                initial_position
+                if i == 0
+                else trajectory[i - 1]
+            )
+
+            direction = position - previous_position
+
+            heading = (
+                np.arctan2(direction[1], direction[0])
+                if np.linalg.norm(direction) > 1e-6
+                else 0.0
+            )
+
+            ego_polygon = self._make_ego_polygon(
+                position,
+                heading,
+                length=ego_length,
+                width=ego_width
+            )
+
+            if not road_polygon.covers(ego_polygon):
+                return False, i
+
+        return True, None
+
+    def _is_destination_reached(
+            self,
+            planning_problem,
+            position,
+            target_position=None,
+            tolerance=0.5
+    ):
+        """
+        Check whether the ego reference point has reached
+        the selected target inside the goal region.
+
+        No arrival-speed requirement.
+        """
+
+        if target_position is None:
+            return False
+
+        position = np.asarray(position, dtype=float)
+        target_position = np.asarray(
+            target_position,
+            dtype=float
+        )
+
+        distance = float(
+            np.linalg.norm(position - target_position)
+        )
+
+        return distance <= tolerance
+
+    def _get_goal_target(
+            self,
+            scenario,
+            planning_problem,
+            end_margin=1.0
+    ):
+        """
+        Select the midpoint of the far end of the goal box,
+        measured along the ego vehicle's initial heading.
+
+        Move the target slightly inward from the boundary.
+        """
+
+        import numpy as np
+        from shapely.ops import unary_union
+        from shapely.geometry import Point
+
+        heading = float(
+            planning_problem.initial_state.orientation
+        )
+
+        forward = np.array([
+            np.cos(heading),
+            np.sin(heading)
+        ], dtype=float)
+
+        goal_shapes = []
+
+        for goal_state in planning_problem.goal.state_list:
+            goal_position = getattr(
+                goal_state, "position", None
+            )
+
+            if goal_position is None:
+                continue
+
+            if hasattr(goal_position, "shapely_object"):
+                goal_shapes.append(goal_position.shapely_object)
+
+            elif hasattr(goal_position, "shapes"):
+                for shape in goal_position.shapes:
+                    if hasattr(shape, "shapely_object"):
+                        goal_shapes.append(shape.shapely_object)
+
+        if not goal_shapes:
+            raise ValueError("No geometric goal region found.")
+
+        goal_polygon = unary_union(goal_shapes)
+
+        # Select the relevant polygon.
+        polygons = (
+            list(goal_polygon.geoms)
+            if goal_polygon.geom_type == "MultiPolygon"
+            else [goal_polygon]
+        )
+
+        polygon = max(polygons, key=lambda p: p.area)
+
+        # Find the farthest boundary edge.
+        coords = np.asarray(
+            polygon.exterior.coords[:-1],
+            dtype=float
+        )
+
+        best_score = -np.inf
+        best_midpoint = None
+
+        for i in range(len(coords)):
+            p1 = coords[i]
+            p2 = coords[(i + 1) % len(coords)]
+
+            midpoint = (p1 + p2) / 2.0
+            edge = p2 - p1
+
+            edge_length = np.linalg.norm(edge)
+
+            if edge_length < 1e-6:
+                continue
+
+            edge_direction = edge / edge_length
+
+            # Prefer an edge perpendicular to travel direction.
+            perpendicular_score = 1.0 - abs(
+                np.dot(edge_direction, forward)
+            )
+
+            # Prefer the edge farther along the road.
+            progress = np.dot(midpoint, forward)
+
+            score = progress + 5.0 * perpendicular_score
+
+            if score > best_score:
+                best_score = score
+                best_midpoint = midpoint
+
+        if best_midpoint is None:
+            raise ValueError("Could not identify goal end edge.")
+
+        # Move slightly backward into the goal region.
+        target = best_midpoint - forward * end_margin
+
+        if not polygon.covers(Point(target)):
+            raise ValueError(
+                "Target is outside the goal region. "
+                "Adjust end_margin or inspect goal geometry."
+            )
+
+        print("\n========== GOAL TARGET DEBUG ==========")
+        print("Far edge midpoint:", best_midpoint)
+        print("Selected target:", target)
+        print("=======================================\n")
+
+        return target
+
     # =========================================================
     # CORE INFERENCE LOGIC
     # =========================================================
-    def _extract_inputs(self, scenario, planning_problem, current_step=0):
+    def _extract_inputs(self, scenario, planning_problem, current_step=0, ego_state=None):
         self._map_ego_position = np.asarray(
             planning_problem.initial_state.position,
             dtype=np.float32
@@ -304,13 +793,15 @@ class FlowPlannerCommonRoadAdapter:
         # Now calls its own internal private methods instead of importing them!
         lane_polylines, lanes_speed_limit, lanes_has_speed_limit = self._extract_map_tensors(scenario)
         neighbors_history = self._extract_neighbor_tensors(scenario, current_time_step=current_step)
-        ego_state = self._extract_ego_state(planning_problem, current_time_step=current_step)
+        ego_state = self._extract_ego_state(planning_problem, current_time_step=current_step, ego_state=ego_state)
+        ego_history = self._build_debug_ego_history(planning_problem, dt=scenario.dt, history_len=21)
         static_objects = self._extract_static_objects(scenario)
         nav_route = self._extract_navigation_route(scenario, planning_problem)
 
         # Convert to torch and send to device with batch dim (B=1)
         inputs = {
             "ego_current_state": torch.from_numpy(ego_state).float().unsqueeze(0).to(self.device),
+            "ego_agent_past": torch.from_numpy(ego_history).float().unsqueeze(0).to(self.device),
             "neighbor_agents_past": torch.from_numpy(neighbors_history).float().unsqueeze(0).to(self.device),
             "lanes": torch.from_numpy(lane_polylines).float().unsqueeze(0).to(self.device),
             "lanes_speed_limit": torch.from_numpy(lanes_speed_limit).float().unsqueeze(0).to(self.device),
@@ -318,15 +809,56 @@ class FlowPlannerCommonRoadAdapter:
             "static_objects": torch.from_numpy(static_objects).float().unsqueeze(0).to(self.device),
             "route_lanes": torch.from_numpy(nav_route).float().unsqueeze(0).to(self.device),
         }
+
+        # ==========================================
+        # DEBUG: MAP DIRECTION MAGNITUDES
+        # ==========================================
+
+        lanes = inputs["lanes"].detach().cpu().numpy()
+
+        valid = np.any(lanes != 0, axis=-1)
+
+        direction_norms = np.linalg.norm(
+            lanes[..., 2:4],
+            axis=-1
+        )
+
+        valid_norms = direction_norms[valid]
+
+        print("\n========== MAP DIRECTION DEBUG ==========")
+
+        if len(valid_norms) > 0:
+            print("Min:", valid_norms.min())
+            print("Max:", valid_norms.max())
+            print("Mean:", valid_norms.mean())
+
+        print("========================================\n")
+
         return inputs, ego_state
 
     @torch.no_grad()
-    def plan(self, scenario, planning_problem, current_step=0) -> np.ndarray:
+    def plan(
+            self,
+            scenario,
+            planning_problem,
+            current_step=0,
+            ego_state=None,
+            debug_disable_agents=False,
+            debug_seed=None,
+            debug_keep_first_n_agents=None,
+            debug_agent_indices=None,
+            debug_disable_ego_history=False,
+            truncate_at_goal=True
+    ) -> np.ndarray:
         """
         Executes ODE sampling to generate the planned trajectory in world coordinates.
         Output: (N_steps, 2) or (N_steps, 4) numpy trajectory.
         """
-        initial_state = planning_problem.initial_state
+        initial_state = (
+            ego_state
+            if ego_state is not None
+            else planning_problem.initial_state
+        )
 
         print("\n========== FLOW-PLANNER DIAGNOSTICS ==========")
         print(f"Ego initial position: {initial_state.position}")
@@ -336,7 +868,78 @@ class FlowPlannerCommonRoadAdapter:
         print(f"Prediction horizon: {80 * scenario.dt:.2f} s")
         print("==============================================\n")
 
-        inputs, ego_world_state = self._extract_inputs(scenario, planning_problem, current_step)
+        # ==========================================
+        # DEBUG: REPRODUCIBLE INFERENCE
+        # ==========================================
+
+        if debug_seed is not None:
+            import random
+
+            random.seed(debug_seed)
+            np.random.seed(debug_seed)
+            torch.manual_seed(debug_seed)
+
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed_all(debug_seed)
+
+            print(f"[DEBUG] Random seed: {debug_seed}")
+
+        inputs, ego_world_state = self._extract_inputs(
+            scenario,
+            planning_problem,
+            current_step=current_step,
+            ego_state=ego_state
+        )
+
+        if debug_disable_ego_history:
+            inputs["ego_agent_past"] = torch.zeros_like(
+                inputs["ego_agent_past"]
+            )
+            print("[DEBUG] Ego history disabled")
+
+        print("\n========== INPUT DICTIONARY DEBUG ==========")
+
+        for key, value in inputs.items():
+            if isinstance(value, torch.Tensor):
+                print(
+                    f"{key}: shape={tuple(value.shape)}, "
+                    f"nonzero={torch.count_nonzero(value).item()}"
+                )
+            else:
+                print(f"{key}: type={type(value).__name__}")
+
+        print("============================================\n")
+
+        # ==========================================
+        # DEBUG: EGO HISTORY
+        # ==========================================
+
+        ego_history = inputs.get(
+            "ego_agent_past",
+            inputs.get("ego_past")
+        )
+
+        print("\n========== EGO HISTORY DEBUG ==========")
+
+        if ego_history is None:
+            print("Ego history is missing.")
+
+        else:
+            print("Shape:", tuple(ego_history.shape))
+
+            history_np = ego_history.detach().cpu().numpy()
+
+            print("History values:")
+            print(history_np)
+
+            valid_steps = np.any(
+                history_np != 0,
+                axis=-1
+            )
+
+            print("Valid history steps:", valid_steps.sum())
+
+        print("======================================\n")
 
         # Transform inputs into ego-centric coordinate frame
         # If the model expects ego-centric frame (X=0, Y=0, heading=0):
@@ -390,12 +993,17 @@ class FlowPlannerCommonRoadAdapter:
                         tensor[..., 4:6] = torch.matmul(tensor[..., 4:6], rot_matrix_inv.T)
                         tensor[..., 6:8] = torch.matmul(tensor[..., 6:8], rot_matrix_inv.T)
 
-                elif key in ['neighbor_agents_past', 'neighbor_past']:
-                    # Indices 4:6 are velocity vectors (vx, vy)
+                elif key in [
+                    'neighbor_agents_past',
+                    'neighbor_past',
+                    'ego_agent_past',
+                    'ego_past'
+                ]:
                     if tensor.shape[-1] >= 6:
-                        tensor[..., 4:6] = torch.matmul(tensor[..., 4:6], rot_matrix_inv.T)
-
-                # Note: We do NOT rotate indices 4:6 for static_objects because those are Width & Length!
+                        tensor[..., 4:6] = torch.matmul(
+                            tensor[..., 4:6],
+                            rot_matrix_inv.T
+                        )
 
                 inputs[key] = tensor
 
@@ -406,6 +1014,34 @@ class FlowPlannerCommonRoadAdapter:
         for key in ['ego_current_state', 'ego_current']:
             if key in inputs:
                 inputs[key] = origin_state.unsqueeze(0)
+
+        print("\n========== FINAL EGO INPUT ==========")
+
+        ego_final = inputs["ego_current_state"]
+
+        print("Shape:", tuple(ego_final.shape))
+        print("Values:", ego_final.detach().cpu().numpy())
+
+        print("====================================\n")
+
+        print("\n========== MODEL INPUT KEYS ==========")
+
+        print("Input keys:", list(inputs.keys()))
+
+        print(
+            "Ego history shape:",
+            tuple(inputs["ego_agent_past"].shape)
+        )
+
+        print(
+            "Ego history nonzero:",
+            torch.count_nonzero(
+                inputs["ego_agent_past"]
+            ).item()
+        )
+
+        print("======================================\n")
+
         # -------------------------------------------
 
         data_obj = CommonRoadDataSample(
@@ -421,6 +1057,28 @@ class FlowPlannerCommonRoadAdapter:
             routes_has_speedlimit=inputs.get('route_lanes_has_speed_limit', inputs.get('routes_has_speedlimit')),
             map_objects=inputs.get('static_objects', inputs.get('map_objects'))
         )
+
+        assert inputs["ego_agent_past"].shape == (1, 21, 14), (
+            f"Unexpected ego history shape: "
+            f"{inputs['ego_agent_past'].shape}"
+        )
+
+        assert inputs["ego_current_state"].shape == (1, 16), (
+            f"Unexpected current ego shape: "
+            f"{inputs['ego_current_state'].shape}"
+        )
+
+        assert inputs["neighbor_agents_past"].shape[-1] == 11, (
+            "Neighbor agent features must have dimension 11.r"
+        )
+
+        print("[DEBUG] Flow-Planner input shapes verified")
+
+        print("\n========== DATA SAMPLE DEBUG ==========")
+        print("ego_current:", tuple(data_obj.ego_current.shape))
+        print("ego_past:", tuple(data_obj.ego_past.shape))
+        print("ego_future:", tuple(data_obj.ego_future.shape))
+        print("=======================================\n")
 
         # Execute the exact Flow-Planner ODE generation logic
         planned_traj_ego = self.model.forward_inference(
@@ -450,6 +1108,29 @@ class FlowPlannerCommonRoadAdapter:
         assert planned_traj_ego.shape[-1] >= 2, (
             "Trajectory must contain x and y coordinates."
         )
+
+        print("\n========== RAW MODEL OUTPUT ==========")
+
+        print("Output shape:", planned_traj_ego.shape)
+
+        # planned_traj_ego is already (80, 4)
+        raw = planned_traj_ego
+
+        print("\nFirst 5 predicted states:")
+        print(raw[:5, :])
+
+        print("\nLast 5 predicted states:")
+        print(raw[-5:, :])
+
+        print("\nFeature statistics:")
+        for i in range(raw.shape[1]):
+            print(
+                f"Feature {i}: "
+                f"min={raw[:, i].min():.4f}, "
+                f"max={raw[:, i].max():.4f}"
+            )
+
+        print("====================================\n")
 
         # Transform planned trajectory from ego-centric back to CommonRoad world coordinates:
         # [x_world, y_world]^T = R(yaw) * [x_ego, y_ego]^T + [ego_x, ego_y]^T
@@ -493,7 +1174,7 @@ class FlowPlannerCommonRoadAdapter:
         predicted_speeds = step_distances / model_dt
 
         print("\n========== SPEED DIAGNOSTICS ==========")
-        print(f"Initial CommonRoad speed: {planning_problem.initial_state.velocity:.2f} m/s")
+        print(f"Current ego speed: {initial_state.velocity:.2f} m/s")
         print(f"First predicted speed: {predicted_speeds[0]:.2f} m/s")
         print(f"Mean predicted speed: {np.mean(predicted_speeds):.2f} m/s")
         print(f"Last predicted speed: {predicted_speeds[-1]:.2f} m/s")
@@ -505,7 +1186,6 @@ class FlowPlannerCommonRoadAdapter:
 
         print("=======================================\n")
 
-        from shapely.geometry import Point
         from shapely.ops import unary_union
 
         goal_poly = None
@@ -546,8 +1226,8 @@ class FlowPlannerCommonRoadAdapter:
                 point = Point(float(pt[0]), float(pt[1]))
 
                 if goal_poly.covers(point):
-                    # Stop immediately upon entering goal region
-                    xy_world = xy_world[:i + 1]
+                    if truncate_at_goal:
+                        xy_world = xy_world[:i + 1]
                     goal_reached = True
 
                     print(
@@ -573,4 +1253,278 @@ class FlowPlannerCommonRoadAdapter:
                     f"{distance_to_goal:.2f} m"
                 )
 
+            # ==========================================
+            # DEBUG: GOAL DISTANCE OVER TIME
+            # ==========================================
+
+            if goal_poly is not None:
+
+                goal_distances = np.array([
+                    Point(float(p[0]), float(p[1])).distance(goal_poly)
+                    for p in xy_world
+                ])
+
+                print("\n========== GOAL DISTANCE PROFILE ==========")
+
+                for idx in [0, 10, 20, 30, 40, 50, 60, 70, 79]:
+                    if idx < len(goal_distances):
+                        print(
+                            f"Step {idx:02d}: "
+                            f"{goal_distances[idx]:.3f} m"
+                        )
+
+                closest_idx = int(np.argmin(goal_distances))
+
+                print(f"Closest step: {closest_idx}")
+                print(
+                    f"Minimum goal distance: "
+                    f"{goal_distances[closest_idx]:.3f} m"
+                )
+
+                print("===========================================\n")
+
+            # ==========================================
+            # DEBUG: ROUTE FEATURES
+            # ==========================================
+
+            route_tensor = inputs["route_lanes"]
+
+            print("\n========== ROUTE DEBUG ==========")
+            print("Route tensor shape:", tuple(route_tensor.shape))
+
+            route_np = route_tensor.detach().cpu().numpy()
+
+            valid_route_segments = np.any(
+                route_np != 0,
+                axis=(-1, -2)
+            )
+
+            print(
+                "Valid route segments:",
+                int(valid_route_segments.sum())
+            )
+
+            print("First route segment:")
+            print(route_np[0, 0])
+
+            print("=================================\n")
+
         return xy_world
+
+
+    def plan_receding_horizon(
+            self,
+            scenario,
+            planning_problem,
+            replan_steps=10,
+            max_cycles=20,
+            seed=42
+    ):
+        """
+        Repeatedly generate and validate short trajectory segments.
+
+        Returns:
+            Executed trajectory in world coordinates, shape (N, 2).
+        """
+
+        from commonroad.scenario.state import InitialState
+
+        if replan_steps < 1:
+            raise ValueError("replan_steps must be >= 1")
+
+        current_state = planning_problem.initial_state
+        current_step = int(current_state.time_step)
+
+        # ==========================================
+        # SELECT TARGET NEAR CENTRE OF GOAL
+        # ==========================================
+
+        target_position = self._get_goal_target(
+            scenario,
+            planning_problem
+        )
+
+        executed = [
+            np.asarray(current_state.position, dtype=float)
+        ]
+
+        arrival_tolerance = 0.5
+        for cycle in range(max_cycles):
+
+            if self._is_destination_reached(
+                    planning_problem,
+                    current_state.position,
+                    target_position=target_position,
+                    tolerance=arrival_tolerance
+            ):
+                print(
+                    f"[REPLAN] Goal already satisfied "
+                    f"at timestep {current_step}"
+                )
+                break
+
+            print(
+                f"\n========== REPLANNING CYCLE {cycle} =========="
+            )
+
+            trajectory = self.plan(
+                scenario,
+                planning_problem,
+                current_step=current_step,
+                ego_state=current_state,
+                debug_seed=seed + cycle,
+                truncate_at_goal=False
+            )
+
+            print("\n========== REPLANNING LENGTH DEBUG ==========")
+            print("Cycle:", cycle)
+            print("Current timestep:", current_step)
+            print("Predicted points:", len(trajectory))
+            print("Requested execution steps:", replan_steps)
+            print("=============================================\n")
+
+            trajectory = np.asarray(trajectory, dtype=float)
+
+            if trajectory.ndim != 2 or trajectory.shape[1] != 2:
+                raise ValueError(
+                    f"Unexpected trajectory shape: {trajectory.shape}"
+                )
+
+            if not np.all(np.isfinite(trajectory)):
+                raise ValueError(
+                    "Trajectory contains non-finite values."
+                )
+
+            if len(trajectory) == 0:
+                print("[REPLAN] Empty trajectory.")
+                break
+
+            # Execute at most replan_steps future points.
+            n = min(replan_steps, len(trajectory))
+            segment = trajectory[:n]
+
+            # ==========================================
+            # FIND FIRST POINT NEAR GOAL TARGET
+            # ==========================================
+
+            for i, position in enumerate(segment):
+
+                if self._is_destination_reached(
+                        planning_problem,
+                        position,
+                        target_position=target_position,
+                        tolerance=0.5
+                ):
+                    segment = segment[:i + 1]
+                    n = len(segment)
+
+                    print(
+                        f"[REPLAN] Target predicted at "
+                        f"segment index {i}"
+                    )
+
+                    break
+
+            # ------------------------------------------
+            # Collision validation
+            # ------------------------------------------
+
+            collision_free, collision_step, obstacle_id = (
+                self._check_trajectory_collisions(
+                    scenario,
+                    segment,
+                    start_step=current_step,
+                    initial_position=current_state.position
+                )
+            )
+
+            if not collision_free:
+                print(
+                    f"[REPLAN] Collision predicted at "
+                    f"step {collision_step}, "
+                    f"obstacle {obstacle_id}"
+                )
+                break
+
+            # ------------------------------------------
+            # Road-boundary validation
+            # ------------------------------------------
+
+            road_valid, invalid_index = (
+                self._check_road_boundaries(
+                    scenario,
+                    segment,
+                    initial_position=current_state.position
+                )
+            )
+
+            if not road_valid:
+                print(
+                    f"[REPLAN] Road-boundary violation "
+                    f"at segment index {invalid_index}"
+                )
+                break
+
+            # ------------------------------------------
+            # Update ego state
+            # ------------------------------------------
+
+            previous_position = (
+                np.asarray(current_state.position, dtype=float)
+                if n == 1
+                else segment[-2]
+            )
+
+            new_position = segment[-1]
+
+            direction = new_position - previous_position
+
+            distance = float(np.linalg.norm(direction))
+
+            if distance > 1e-6:
+                new_heading = float(
+                    np.arctan2(direction[1], direction[0])
+                )
+            else:
+                new_heading = float(current_state.orientation)
+
+            new_velocity = distance / scenario.dt
+
+            current_step += n
+
+            current_state = InitialState(
+                position=np.asarray(new_position, dtype=float),
+                orientation=new_heading,
+                velocity=float(new_velocity),
+                acceleration=0.0,
+                yaw_rate=0.0,
+                slip_angle=0.0,
+                time_step=current_step
+            )
+
+            executed.extend(segment)
+
+            print(f"[REPLAN] Current step: {current_step}")
+            print(f"[REPLAN] Position: {new_position}")
+            print(f"[REPLAN] Velocity: {new_velocity:.2f} m/s")
+
+            # ==========================================
+            # CHECK COMMONROAD GOAL SATISFACTION
+            # ==========================================
+
+            goal_reached = planning_problem.goal.is_reached(
+                current_state
+            )
+
+            print(
+                f"[REPLAN] Goal satisfied: {goal_reached}"
+            )
+
+            if goal_reached:
+                print(
+                    f"[REPLAN] Goal reached at timestep "
+                    f"{current_step}"
+                )
+                break
+
+        return np.asarray(executed, dtype=float)

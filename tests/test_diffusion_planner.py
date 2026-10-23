@@ -247,52 +247,6 @@ def test_run():
         create_collision_object,
     )
 
-    print("\n========== COLLISION DETAILS ==========")
-
-    obstacle = scenario.obstacle_by_id(321)
-    obstacle_collision = create_collision_object(obstacle)
-
-    ego_shape = Rectangle(length=5.18, width=2.30)
-
-    collision_steps = []
-
-    for state in global_states:
-        one_step_trajectory = Trajectory(
-            initial_time_step=state.time_step,
-            state_list=[state],
-        )
-
-        one_step_prediction = TrajectoryPrediction(
-            trajectory=one_step_trajectory,
-            shape=ego_shape,
-        )
-
-        ego_collision = create_collision_object(one_step_prediction)
-
-        if ego_collision.collide(obstacle_collision):
-            collision_steps.append(state.time_step)
-
-            obstacle_state = obstacle.state_at_time(
-                state.time_step
-            )
-
-            print(f"\nCollision at timestep {state.time_step}")
-            print(f"  Time: {state.time_step * scenario.dt:.2f} s")
-            print(f"  Ego position: {state.position}")
-
-            if obstacle_state is not None:
-                print(
-                    f"  Obstacle position: "
-                    f"{obstacle_state.position}"
-                )
-                print(
-                    f"  Obstacle velocity: "
-                    f"{getattr(obstacle_state, 'velocity', 'N/A')}"
-                )
-
-    print(f"\nCollision timesteps: {collision_steps}")
-    print("=======================================")
-
 # 1. Vehicle dynamics
     dynamics = check_vehicle_dynamics(
         states=global_states,

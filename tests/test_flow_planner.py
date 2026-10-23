@@ -15,14 +15,14 @@ def test_run():
     scenario_files = glob.glob(scenario_search_path)
     if not scenario_files:
         raise FileNotFoundError("No .xml scenario files found in data/scenarios/")
-    scenario_path = scenario_files[0]
-    print(f"Testing on scenario: {scenario_path}")
+    scenario_normal_path = scenario_files[0]
+    print(f"Testing on scenario: {scenario_normal_path}")
 
     config_path = "checkpoints/flow_planner/model_config.yaml"
     checkpoint_path = "checkpoints/flow_planner/model.pth"
 
     # 2. Load CommonRoad scenario and planning problem
-    scenario, planning_problem_set = CommonRoadFileReader(scenario_path).open()
+    scenario, planning_problem_set = CommonRoadFileReader(scenario_normal_path).open()
     planning_problem = list(planning_problem_set.planning_problem_dict.values())[0]
 
     # 3. Initialize Adapter
@@ -32,51 +32,109 @@ def test_run():
         device="cuda" if torch.cuda.is_available() else "cpu"
     )
 
-    # 4. Generate Trajectory
-    print("Generating trajectory with Flow-Planner...")
-    planned_trajectory = adapter.plan(scenario, planning_problem, current_step=0)
-    print(f"Trajectory generated successfully! Shape: {planned_trajectory.shape}")
-    print(f"Start pos: {planned_trajectory[0]}, End pos: {planned_trajectory[-1]}")
+    # ==========================================
+    # COLLISION-AWARE RECEDING-HORIZON TEST
+    # ==========================================
 
-    # 5. Visualize
-    print(f"Trajectory generated successfully! Length: {planned_trajectory.shape[0]} steps")
+    print("\n========== CLOSED-LOOP TEST ==========")
+
+    closed_loop_trajectory = adapter.plan_receding_horizon(
+        scenario=scenario,
+        planning_problem=planning_problem,
+        replan_steps=10,
+        max_cycles=30,
+        seed=42
+    )
+
+    target_position = adapter._get_goal_target(
+        scenario,
+        planning_problem
+    )
+
+    final_position = closed_loop_trajectory[-1]
+
+    distance_to_target = np.linalg.norm(
+        final_position - target_position
+    )
+
+    print("\n========== TARGET ARRIVAL ==========")
+    print("Target position:", target_position)
+    print("Final position:", final_position)
+    print(f"Distance to target: {distance_to_target:.3f} m")
+    print("====================================\n")
+    '''
+    assert distance_to_target <= 0.5, (
+        f"Target not reached. Remaining distance: "
+        f"{distance_to_target:.3f} m"
+    )
+    '''
+    print("\n========== CLOSED-LOOP RESULTS ==========")
+    print("Trajectory shape:", closed_loop_trajectory.shape)
+    print("Start position:", closed_loop_trajectory[0])
+    print("Final position:", closed_loop_trajectory[-1])
+    print("========================================\n")
+
+    assert closed_loop_trajectory.ndim == 2
+    assert closed_loop_trajectory.shape[1] == 2
+    assert np.all(np.isfinite(closed_loop_trajectory))
 
     import matplotlib.pyplot as plt
     from commonroad.visualization.mp_renderer import MPRenderer
 
-    # Initialize CommonRoad Renderer
     plt.figure(figsize=(12, 12))
-    rnd = MPRenderer()
-    scenario.draw(rnd)
-    planning_problem.draw(rnd)
-    rnd.render()
 
-    # Plot our Flow-Planner numpy trajectory on top!
-    plt.plot(planned_trajectory[:, 0], planned_trajectory[:, 1],
-             color='red', linewidth=2.5, marker='o', markersize=3,
-             label='Flow-Planner Output', zorder=20)
+    renderer = MPRenderer()
+    scenario.draw(renderer)
+    planning_problem.draw(renderer)
+    renderer.render()
 
+    plt.plot(
+        closed_loop_trajectory[:, 0],
+        closed_loop_trajectory[:, 1],
+        color="red",
+        linewidth=2.5,
+        label="Executed receding-horizon trajectory",
+        zorder=20
+    )
+
+    plt.scatter(
+        closed_loop_trajectory[0, 0],
+        closed_loop_trajectory[0, 1],
+        color="green",
+        s=70,
+        label="Start",
+        zorder=21
+    )
+
+    plt.scatter(
+        closed_loop_trajectory[-1, 0],
+        closed_loop_trajectory[-1, 1],
+        color="red",
+        s=70,
+        label="Final position",
+        zorder=21
+    )
+
+    target_position = adapter._get_goal_target(
+        scenario,
+        planning_problem
+    )
+
+    plt.scatter(
+        target_position[0],
+        target_position[1],
+        color="purple",
+        marker="x",
+        s=120,
+        linewidths=3,
+        label="Goal target",
+        zorder=30
+    )
+
+    plt.axis("equal")
     plt.legend()
-    plt.title("Flow-Planner")
+    plt.title("Flow-Planner Receding-Horizon Trajectory")
     plt.show()
-
-    model_dt = 0.1
-
-    step_distances = np.linalg.norm(
-        np.diff(planned_trajectory[:, :2], axis=0),
-        axis=1
-    )
-
-    speeds = step_distances / model_dt
-    times = np.arange(1, len(planned_trajectory)) * model_dt
-
-    plt.figure(figsize=(9, 4))
-    plt.plot(times, speeds, label="Flow-Planner predicted speed")
-    plt.axhline(
-        y=planning_problem.initial_state.velocity,
-        linestyle="--",
-        label="CommonRoad initial speed"
-    )
 
 if __name__ == "__main__":
     test_run()

@@ -38,7 +38,16 @@ class ModelInputProcessor:
         if self.obs_normalizer is not None:
             data = self.obs_normalizer(data)
 
-        ego_future = data.ego_future
+        if is_training:
+            ego_future = data.ego_future
+        else:
+            # No ground-truth future is available during inference
+            ego_future = torch.empty(
+                (data.ego_current.shape[0], 0, 4),
+                dtype=data.ego_current.dtype,
+                device=device
+            )
+
         if ego_future.numel() != 0:
             ego_future = ego_future[..., -self.future_len:, :3] # (x, y, heading)
 
