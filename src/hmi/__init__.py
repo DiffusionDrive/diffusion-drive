@@ -7,6 +7,9 @@
 # https://www.findlatitudeandlongitude.com/l/Nus+Singapore/4993767/#google_vignette 
 # to find NUS lat and lon
 
+# https://time-ok.com/coordinates/flensburg
+# Flensburg co-ords
+
 # https://www.cleanpng.com/png-logo-brand-coupon-code-business-location-icon-dvlxs3/
 # goto map marker
 
@@ -32,6 +35,7 @@ from kivy.clock import Clock
 
 Window.size = (375,667)
 Window.clearcolor = (200/255.0, 255/255.0, 151/255.0, 0.6)
+txt_input = []
 
 class MainScreen(Screen): # map screen (home page)
     pass
@@ -42,6 +46,7 @@ class Screen1(Screen): # goto (end goal) screen
         print(goto)
 
         self.ids.goto_input.text = ''
+        txt_input.append(goto)
 
 class Screen2(Screen): # from (start goal) screen
     def press(self):
@@ -49,6 +54,7 @@ class Screen2(Screen): # from (start goal) screen
         print(here)
 
         self.ids.from_input.text = ''
+        txt_input.append(here)
 
 class Screen3(Screen): # mark (two goal confirmation) screen <to have initial planned route shown>
     def coord(self):
@@ -58,6 +64,7 @@ class Screen3(Screen): # mark (two goal confirmation) screen <to have initial pl
         e_lat = self.ids.end_mark.lat
         e_lon = self.ids.end_mark.lon
         print(e_lat, e_lon)
+        print(txt_input)
 
 class Screen4(Screen): # moving (progress + detours (if any)) screen
     def next(self, dt):
