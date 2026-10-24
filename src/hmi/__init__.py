@@ -51,7 +51,13 @@ class Screen2(Screen): # from (start goal) screen
         self.ids.from_input.text = ''
 
 class Screen3(Screen): # mark (two goal confirmation) screen <to have initial planned route shown>
-    pass
+    def coord(self):
+        s_lat = self.ids.start_mark.lat
+        s_lon = self.ids.start_mark.lon
+        print(s_lat, s_lon)
+        e_lat = self.ids.end_mark.lat
+        e_lon = self.ids.end_mark.lon
+        print(e_lat, e_lon)
 
 class Screen4(Screen): # moving (progress + detours (if any)) screen
     def next(self, dt):

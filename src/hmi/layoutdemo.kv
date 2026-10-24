@@ -79,12 +79,14 @@ ScreenManagement:
         zoom: 16
 
         MapMarkerPopup:
+            id: start_mark
             lat: 52.5195
             lon: 13.403
 
             popup_size:dp(230),dp(130)
     
         MapMarkerPopup:
+            id: end_mark
             source: "goto.png"
             lat: 52.522
             lon: 13.406
@@ -95,6 +97,11 @@ ScreenManagement:
         text: "Start Travel"
         pos_hint: {"x":.8, "top":.8}
         on_press: app.root.current = 'moving'
+
+    Button:
+        text: "Show Marks"
+        pos_hint: {"x":.8, "top":.3}
+        on_press: root.coord()
 
 <Screen4>:
     name: 'moving'
