@@ -26,6 +26,8 @@ dependencies = [
     "fonttools==4.63.0",
     "frozenlist==1.8.0",
     "fsspec==2026.7.0",
+    "geographiclib==2.1",          #For HMI
+    "geopy==2.5.0",                #For HMI
     "huggingface-hub==1.29.0",
     "idna==3.19",
     "iso3166==2.1.1",

@@ -16,8 +16,8 @@ ScreenManagement:
         size: root.width, root.height
 
         MapView:
-            lat: 52.52
-            lon: 13.405
+            lat: 54.7843
+            lon: 9.43961
             zoom: 16
 
         Button:
@@ -74,20 +74,22 @@ ScreenManagement:
 <Screen3>:
     name: 'mark'
     MapView:
-        lat: 52.52
-        lon: 13.405
+        lat: 54.7843
+        lon: 9.43961
         zoom: 16
 
         MapMarkerPopup:
-            lat: 52.5195
-            lon: 13.403
+            id: start_mark
+            lat: 54.783
+            lon: 9.439
 
             popup_size:dp(230),dp(130)
     
         MapMarkerPopup:
+            id: end_mark
             source: "goto.png"
-            lat: 52.522
-            lon: 13.406
+            lat: 54.785
+            lon: 9.4397
 
             popup_size:dp(230),dp(130)
     
@@ -96,23 +98,28 @@ ScreenManagement:
         pos_hint: {"x":.8, "top":.8}
         on_press: app.root.current = 'moving'
 
+    Button:
+        text: "Show Marks"
+        pos_hint: {"x":.8, "top":.3}
+        on_press: root.coord()
+
 <Screen4>:
     name: 'moving'
     MapView:
-        lat: 52.52
-        lon: 13.405
+        lat: 54.7843
+        lon: 9.43961
         zoom: 16
 
         MapMarkerPopup:
-            lat: 52.5195
-            lon: 13.403
+            lat: 54.783
+            lon: 9.439
 
             popup_size:dp(230),dp(130)
     
         MapMarkerPopup:
             source: "goto.png"
-            lat: 52.522
-            lon: 13.406
+            lat: 54.785
+            lon: 9.4397
 
             popup_size:dp(230),dp(130)
 
@@ -135,14 +142,14 @@ ScreenManagement:
 <Screen5>:
     name: 'reached'
     MapView:
-        lat: 52.52
-        lon: 13.405
+        lat: 54.7843
+        lon: 9.43961
         zoom: 16
     
         MapMarkerPopup:
             source: "reached.png"
-            lat: 52.522
-            lon: 13.406
+            lat: 54.785
+            lon: 9.4397
 
             popup_size:dp(230),dp(130)
     
