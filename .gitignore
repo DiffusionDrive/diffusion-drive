@@ -226,10 +226,11 @@ __marimo__/
 checkpoints/
 pretrained_models/
 
-# Datasets and CommonRoad Scenarios (Keeps repo size small)
+# Datasets, CommonRoad Scenarios and plots
 data/
 datasets/
 scenarios/downloaded/
+plots/
 
 # ML Experiment Logging (TensorBoard, Weights & Biases)
 logs/
