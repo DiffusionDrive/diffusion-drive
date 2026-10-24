@@ -2,6 +2,7 @@ import os
 import glob
 import numpy as np
 import matplotlib.pyplot as plt
+from shapely.geometry import Polygon
 from commonroad.common.file_reader import CommonRoadFileReader
 from commonroad.visualization.mp_renderer import MPRenderer
 
@@ -29,7 +30,7 @@ def test_run():
     adapter = ModelBasedDiffusionCommonRoadAdapter(
         seed=0,
         num_samples=2048,
-        horizon=50,
+        horizon=100,
         diffusion_steps=100
     )
 
@@ -57,6 +58,13 @@ def test_run():
         markersize=3,
         label='MBD Output',
         zorder=20
+    )
+
+    plt.plot(
+        np.asarray(adapter.env.xref[:, 0]),
+        np.asarray(adapter.env.xref[:, 1]),
+        "g--",
+        label="Reference centerline"
     )
 
     plt.legend()
