@@ -76,6 +76,7 @@ def run_diffusion(args: Args, env=None):
     reset_env_jit = jax.jit(env.reset)
     # eval_us = jax.jit(functools.partial(mbd.utils.eval_us, step_env_jit))
     rollout_us = jax.jit(functools.partial(mbd.utils.rollout_us, step_env_jit))
+    rollout_us_collision = jax.jit(functools.partial(mbd.utils.rollout_us_with_collision,step_env_jit))
 
     rng, rng_reset = jax.random.split(rng)  # NOTE: rng_reset should never be changed.
     state_init = reset_env_jit(rng_reset)
@@ -107,23 +108,92 @@ def run_diffusion(args: Args, env=None):
         Y0s = jnp.clip(Y0s, -1.0, 1.0)
 
         # esitimate mu_0tm1
-        rewss, qs = jax.vmap(rollout_us, in_axes=(None, 0))(state_init, Y0s)
-        rews = rewss.mean(axis=-1)
-        rew_std = rews.std()
-        rew_std = jnp.where(rew_std < 1e-4, 1.0, rew_std)
-        rew_mean = rews.mean()
-        logp0 = (rews - rew_mean) / rew_std / args.temp_sample
+        rewss, qs, collisions = jax.vmap(rollout_us_collision, in_axes=(None, 0))(state_init, Y0s)
 
-        # evalulate demo
+        # Dynamic obstacle safety cost for every candidate trajectory
+        dynamic_cost = jax.vmap(
+            env.dynamic_safety_cost
+        )(qs)
+
+        # Terminal state
+        terminal_state = qs[:, -1, :]
+
+        # Position error
+        terminal_distance = jnp.linalg.norm(
+            terminal_state[:, :2] - env.xg[:2],
+            axis=-1
+        )
+
+        # Heading error
+        heading_error = jnp.arctan2(
+            jnp.sin(terminal_state[:, 2] - env.xg[2]),
+            jnp.cos(terminal_state[:, 2] - env.xg[2])
+        )
+
+        # Actual vehicle speed, not the control command
+        terminal_speed = terminal_state[:, 3]
+
+        # Smooth control sequence
+        control_variation = jnp.square(
+            jnp.diff(Y0s, axis=1)
+        ).mean(axis=(1, 2))
+
+        # Goal position
+        position_cost = 8.0 * terminal_distance
+
+        # Stopping objective
+        stop_cost = 30.0 * terminal_speed ** 2
+
+        # Goal orientation
+        heading_cost = 1.0 * heading_error ** 2
+
+        # Smooth controls
+        smoothness_cost = 0.5 * control_variation
+
+        # Collision penalty
+        collision_cost = 1000.0 * jnp.any(
+            collisions > 0, axis=1
+        ).astype(jnp.float32)
+
+        # Route guidance
         if args.enable_demo:
-            xref_logpds = jax.vmap(env.eval_xref_logpd)(qs)
-            xref_logpds = xref_logpds - xref_logpds.max()
-            logpdemo = (
-                (xref_logpds + env.rew_xref - rew_mean) / rew_std / args.temp_sample
-            )
-            demo_mask = logpdemo > logp0
-            logp0 = jnp.where(demo_mask, logpdemo, logp0)
-            logp0 = (logp0 - logp0.mean()) / logp0.std() / args.temp_sample
+            route_cost = -jax.vmap(
+                env.eval_xref_logpd
+            )(qs)
+        else:
+            route_cost = jnp.zeros_like(terminal_distance)
+
+        # Single consistent reward
+        rews = (
+                0.2 * rewss.mean(axis=-1)
+                - position_cost
+                - stop_cost
+                - heading_cost
+                - smoothness_cost
+                - collision_cost
+                - 50.0 * dynamic_cost
+        )
+        rew_std = rews.std()
+        # Spatial centerline guidance
+        if args.enable_demo:
+            centerline_scores = jax.vmap(
+                env.eval_xref_logpd
+            )(qs)
+        else:
+            centerline_scores = jnp.zeros_like(rews)
+
+        # Combine lane-centering with the existing objective
+        rews = rews + 2.0 * centerline_scores
+
+        # Normalize the combined reward
+        rew_mean = jnp.mean(rews)
+        rew_std = jnp.maximum(jnp.std(rews), 1e-4)
+
+        logp0 = (
+                (rews - rew_mean)
+                / rew_std
+                / args.temp_sample
+        )
 
         weights = jax.nn.softmax(logp0)
         Ybar = jnp.einsum("n,nij->ij", weights, Y0s)  # NOTE: update only with reward

@@ -19,6 +19,21 @@ def rollout_us(step_env, state, us):
     _, (rews, pipline_states) = jax.lax.scan(step, state, us)
     return rews, pipline_states
 
+def rollout_us_with_collision(step_env, state, us):
+    def step(state, u):
+        state = step_env(state, u)
+
+        return state, (
+            state.reward,
+            state.pipeline_state,
+            state.done
+        )
+
+    _, (rews, states, collisions) = jax.lax.scan(
+        step, state, us
+    )
+
+    return rews, states, collisions
 
 def render_us(step_env, sys, state, us):
     rollout = []
