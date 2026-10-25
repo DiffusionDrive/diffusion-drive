@@ -32,6 +32,7 @@ from kivy.lang import Builder
 from kivy.uix.screenmanager import ScreenManager, Screen, FadeTransition
 
 from kivy.clock import Clock
+from geocode import geocoder_d
 
 Window.size = (375,667)
 Window.clearcolor = (200/255.0, 255/255.0, 151/255.0, 0.6)
@@ -46,7 +47,7 @@ class Screen1(Screen): # goto (end goal) screen
         print(goto)
 
         self.ids.goto_input.text = ''
-        txt_input.append(goto)
+        txt_input.append(geocoder_d(goto))
 
 class Screen2(Screen): # from (start goal) screen
     def press(self):
@@ -54,7 +55,7 @@ class Screen2(Screen): # from (start goal) screen
         print(here)
 
         self.ids.from_input.text = ''
-        txt_input.append(here)
+        txt_input.append(geocoder_d(here))
 
 class Screen3(Screen): # mark (two goal confirmation) screen <to have initial planned route shown>
     def coord(self):
