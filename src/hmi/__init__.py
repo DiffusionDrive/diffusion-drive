@@ -54,20 +54,7 @@ class Screen2(Screen): # from (start goal) screen
         txt_input.append(geocode.geocoder_d(here))
 
 class Screen3(Screen): # mark (two goal confirmation) screen <to have initial planned route shown>
-    def coord(self):
-        print(txt_input) # [(goto_lat, goto_lon), (here_lat, here_lon)]
-
-        self.ids.goto_mark.lat = txt_input[0][0]
-        self.ids.goto_mark.lon = txt_input[0][1]
-        self.ids.here_mark.lat = txt_input[1][0]
-        self.ids.here_mark.lon = txt_input[1][1]
-        s_lat = self.ids.here_mark.lat
-        s_lon = self.ids.here_mark.lon
-        print(s_lat, s_lon)
-        e_lat = self.ids.goto_mark.lat
-        e_lon = self.ids.goto_mark.lon
-        print(e_lat, e_lon)
-        
+    pass
 
 class Screen4(Screen): # moving (progress + detours (if any)) screen
     def next(self, dt):
