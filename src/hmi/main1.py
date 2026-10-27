@@ -16,7 +16,12 @@ class MapViewExample(FloatLayout):
         self.map.add_widget(MapMarker(lat = 54.785, lon = 9.441, source = "goto.png"))
 
     def return_home(self):
-        self.map.center_on(54.7843, 9.43961)    
+        self.map.center_on(54.7843, 9.43961)
+
+    def find_goto(self):
+        goto = self.ids.goto_input.text
+        self.ids.goto_input.text = ''
+        txt_input.append(geocode.geocoding(goto))
 
 class Main(App):
     def build(self):

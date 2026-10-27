@@ -45,13 +45,13 @@ class Screen1(Screen): # goto (end goal) screen
     def press(self):
         goto = self.ids.goto_input.text
         self.ids.goto_input.text = ''
-        txt_input.append(geocode.geocoder_d(goto))
+        txt_input.append(geocode.geocoding(goto))
 
 class Screen2(Screen): # from (start goal) screen
     def press(self):
         here = self.ids.from_input.text
         self.ids.from_input.text = ''
-        txt_input.append(geocode.geocoder_d(here))
+        txt_input.append(geocode.geocoding(here))
 
 class Screen3(Screen): # mark (two goal confirmation) screen <to have initial planned route shown>
     pass

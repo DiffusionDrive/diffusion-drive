@@ -1,7 +1,7 @@
 from geopy.geocoders import Nominatim
 from geopy.exc import GeocoderTimedOut, GeocoderServiceError
 
-def geocoder_d(string):
+def geocoding(string):
     geolocator = Nominatim(user_agent="geocode-draft")
 
     # Carlisle Park, Flensburg Galerie, Al Noor Markt, Good Luck, Audio Mobile Lab

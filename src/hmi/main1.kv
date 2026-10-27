@@ -3,7 +3,7 @@
 
 <MyPopup@Popup>
     auto_dismiss: False
-    size_hint: 0.6, 0.6
+    size_hint: 0.8, 0.8
     pos_hint: {"x":0.2, "top":0.9}
 
     title: "This is a popup box"
@@ -11,9 +11,21 @@
     BoxLayout:
         orientation: "vertical"
         size: root.width, root.height
+
         Label:
-            text: "smth"
+            text: "Where to go?"
             font_size: 24
+        
+        TextInput:
+            id: goto_input
+            multiline: False
+            size_hint: (1, .2)
+        
+        Button:
+            text: "Submit goto"
+            font_size: 24
+            on_release: root.find_goto()
+
         Button:
             text: "Close Me!"
             font_size: 24
@@ -29,6 +41,30 @@
         lat: 54.7843
         lon: 9.43961
         zoom: 16
+
+    TextInput:
+        id: here_input
+        text: "Enter starting location"
+        multiline: False
+        size_hint: (.5, .1)
+        pos_hint: {"x":0, "top":.2}
+    
+    Button:
+        text: "Submit here"
+        size_hint: (.5, .1)
+        pos_hint: {"x":0, "top":.1}
+
+    TextInput:
+        id: goto_input
+        text: "Enter end location"
+        multiline: False
+        size_hint: (.5, .1)
+        pos_hint: {"x":0.5, "top":.2}
+
+    Button:
+        text: "Submit goto"
+        size_hint: (.5, .1)
+        pos_hint: {"x":0.5, "top":.1}
 
     Button:
         text: "Return Home"
