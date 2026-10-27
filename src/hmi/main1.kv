@@ -1,14 +1,17 @@
 #:import MapView kivy_garden.mapview.MapView
 
+<Button>
+    font_size: 12
+    size_hint: (0.2, 0.2)
+
 <MapViewExample>:
     MapView:
         id: map
-        lat: 24.0555
-        lon: 90.9802
-        zoom: 10
+        lat: 54.7843
+        lon: 9.43961
+        zoom: 16
 
     Button:
         text: "Return Home"
-        size_hint: (0.2, 0.2)
         pos_hint: {"x":0, "top":1}
         on_release: root.return_home()
