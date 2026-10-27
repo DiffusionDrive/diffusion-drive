@@ -13,7 +13,6 @@ class MapViewExample(FloatLayout):
         super().__init__(**kwargs)
 
         self.map = self.ids.map
-        self.map.add_widget(MapMarker(lat = 54.785, lon = 9.441, source = "goto.png"))
 
     def return_home(self):
         self.map.center_on(54.7843, 9.43961)
@@ -22,10 +21,16 @@ class MapViewExample(FloatLayout):
     def find_here(self):
         here = self.ids.here_input.text
         txt_input.append(geocode.geocoding(here))
+        print(txt_input)
+        self.map.add_widget(MapMarker(lat = txt_input[0][0], lon = txt_input[0][1]))
+        txt_input.pop()
 
     def find_goto(self):
         goto = self.ids.goto_input.text
         txt_input.append(geocode.geocoding(goto))
+        print(txt_input)
+        self.map.add_widget(MapMarker(lat = txt_input[0][0], lon = txt_input[0][1], source = "goto.png"))
+        txt_input.pop()
 
 class Main(App):
     def build(self):
