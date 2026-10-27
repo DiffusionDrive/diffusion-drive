@@ -53,6 +53,7 @@
         text: "Submit here"
         size_hint: (.5, .1)
         pos_hint: {"x":0, "top":.1}
+        on_release: root.find_here()
 
     TextInput:
         id: goto_input
@@ -65,6 +66,7 @@
         text: "Submit goto"
         size_hint: (.5, .1)
         pos_hint: {"x":0.5, "top":.1}
+        on_release: root.find_goto()
 
     Button:
         text: "Return Home"

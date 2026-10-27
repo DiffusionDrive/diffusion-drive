@@ -17,10 +17,14 @@ class MapViewExample(FloatLayout):
 
     def return_home(self):
         self.map.center_on(54.7843, 9.43961)
+        print(txt_input)
+
+    def find_here(self):
+        here = self.ids.here_input.text
+        txt_input.append(geocode.geocoding(here))
 
     def find_goto(self):
         goto = self.ids.goto_input.text
-        self.ids.goto_input.text = ''
         txt_input.append(geocode.geocoding(goto))
 
 class Main(App):
