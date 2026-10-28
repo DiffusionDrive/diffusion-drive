@@ -8,6 +8,7 @@ import geocode
 Window.size = (375,667)
 here_coord = []
 goto_coord = []
+user_coord = []
 
 class MapViewExample(FloatLayout):
     def __init__(self, **kwargs):
@@ -22,8 +23,10 @@ class MapViewExample(FloatLayout):
         here = self.ids.here_input.text
         here_coord.append(geocode.geocoding(here))
         self.map.add_widget(MapMarker(lat = here_coord[0][0], lon = here_coord[0][1]))
-        self.map.add_widget(MapMarker(lat = here_coord[0][0], lon = here_coord[0][1], source = 'driver.png'))
+        user_coord.append(here_coord[0])
+        self.map.add_widget(MapMarker(lat = user_coord[0][0], lon = user_coord[0][1], source = 'driver.png'))
         here_coord.pop()
+        user_coord.pop()
 
     def find_goto(self):
         goto = self.ids.goto_input.text
