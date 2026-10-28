@@ -4,7 +4,8 @@ from geopy.exc import GeocoderTimedOut, GeocoderServiceError
 def geocoding(string):
     geolocator = Nominatim(user_agent="geocode-draft")
 
-    # Flensburg Galerie = (54.7832841, 9.4378336)
+    # Flensburg Galerie = (54.7832841, 9.4378336),
+    # Equippers Flensburg, Alter Friedhof
     # Carlisle Park (south) = (54.7761659, 9.4378642)
     # Al Noor Markt (north-west) = (54.7996017, 9.4229981)
     # Good Luck (north-east) = (54.8076053, 9.4598226)

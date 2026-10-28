@@ -6,7 +6,8 @@ from kivy_garden.mapview import MapView, MapMarker
 import geocode
 
 Window.size = (375,667)
-txt_input = []
+here_coord = []
+goto_coord = []
 
 class MapViewExample(FloatLayout):
     def __init__(self, **kwargs):
@@ -16,21 +17,19 @@ class MapViewExample(FloatLayout):
 
     def return_home(self):
         self.map.center_on(54.7843, 9.43961)
-        print(txt_input)
 
     def find_here(self):
         here = self.ids.here_input.text
-        txt_input.append(geocode.geocoding(here))
-        print(txt_input)
-        self.map.add_widget(MapMarker(lat = txt_input[0][0], lon = txt_input[0][1]))
-        txt_input.pop()
+        here_coord.append(geocode.geocoding(here))
+        self.map.add_widget(MapMarker(lat = here_coord[0][0], lon = here_coord[0][1]))
+        self.map.add_widget(MapMarker(lat = here_coord[0][0], lon = here_coord[0][1], source = 'driver.png'))
+        here_coord.pop()
 
     def find_goto(self):
         goto = self.ids.goto_input.text
-        txt_input.append(geocode.geocoding(goto))
-        print(txt_input)
-        self.map.add_widget(MapMarker(lat = txt_input[0][0], lon = txt_input[0][1], source = "goto.png"))
-        txt_input.pop()
+        goto_coord.append(geocode.geocoding(goto))
+        self.map.add_widget(MapMarker(lat = goto_coord[0][0], lon = goto_coord[0][1], source = "goto.png"))
+        goto_coord.pop()
 
 class Main(App):
     def build(self):
