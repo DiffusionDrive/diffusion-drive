@@ -33,6 +33,11 @@ class MapViewExample(FloatLayout):
         self.map.add_widget(MapMarker(lat = goto_coord[0][0], lon = goto_coord[0][1], source = "goto.png"))
         print(goto_coord)
 
+    def remove_here(self):
+        self.map.remove_widget(MapMarker(lat = here_coord[0][0], lon = here_coord[0][1]))
+        here_coord.pop()
+        print(here_coord)
+
     def remove_goto(self):
         self.map.remove_widget(MapMarker(lat = goto_coord[0][0], lon = goto_coord[0][1], source = "goto.png"))
         goto_coord.pop()
