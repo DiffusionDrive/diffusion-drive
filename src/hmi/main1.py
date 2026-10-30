@@ -25,14 +25,18 @@ class MapViewExample(FloatLayout):
         self.map.add_widget(MapMarker(lat = here_coord[0][0], lon = here_coord[0][1]))
         user_coord.append(here_coord[0])
         self.map.add_widget(MapMarker(lat = user_coord[0][0], lon = user_coord[0][1], source = 'driver.png'))
-        here_coord.pop()
-        user_coord.pop()
+        print(here_coord)
 
     def find_goto(self):
         goto = self.ids.goto_input.text
         goto_coord.append(geocode.geocoding(goto))
         self.map.add_widget(MapMarker(lat = goto_coord[0][0], lon = goto_coord[0][1], source = "goto.png"))
+        print(goto_coord)
+
+    def remove_goto(self):
+        self.map.remove_widget(MapMarker(lat = goto_coord[0][0], lon = goto_coord[0][1], source = "goto.png"))
         goto_coord.pop()
+        print(goto_coord)
 
 class Main(App):
     def build(self):
