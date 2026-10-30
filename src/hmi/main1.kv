@@ -43,6 +43,11 @@
         on_release: root.remove_here()
 
     Button:
+        text: "user@goto"
+        pos_hint: {"x":0.4, "top":1}
+        on_release: root.user_goto()
+
+    Button:
         text: "Remove goto"
         pos_hint: {"x":0.8, "top":1}
         on_release: root.remove_goto()

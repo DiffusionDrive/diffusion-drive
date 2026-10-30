@@ -52,6 +52,17 @@ class MapViewExample(FloatLayout):
             user_coord.pop()
             print('here coord = ' + str(here_coord))
 
+    def user_goto(self): #temporary function
+        if self.user_mark != None:
+            self.map.remove_marker(self.user_mark)
+            self.user_mark = None
+            user_coord.pop()
+        
+        user_coord.append(goto_coord[0])
+        self.user_mark = MapMarker(lat = user_coord[0][0], lon = user_coord[0][1], source = 'driver.png')
+        self.map.add_marker(self.user_mark)
+        print('user had reached their destination!')
+
     def remove_goto(self):
         if self.goto_mark != None:
             self.map.remove_marker(self.goto_mark)
