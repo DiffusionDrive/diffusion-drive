@@ -1,5 +1,7 @@
 import os
 import sys
+from pathlib import Path
+import pytest
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
@@ -10,6 +12,16 @@ from commonroad.visualization.mp_renderer import MPRenderer
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.abspath(os.path.join(current_dir, ".."))
 sys.path.append(os.path.join(project_root, "src", "planner", "diffusion_es", "nuplan_devkit"))
+
+# Discover all CommonRoad scenarios
+SCENARIO_DIR = Path(project_root) / "data" / "scenarios"
+
+SCENARIO_FILES = sorted(SCENARIO_DIR.glob("*.xml"))
+
+if not SCENARIO_FILES:
+    raise RuntimeError(
+        f"No CommonRoad XML scenarios found in {SCENARIO_DIR}"
+    )
 
 from src.planner.diffusion_es.adapter import extract_vector_map, extract_ego_history, extract_agent_history
 
@@ -47,10 +59,28 @@ if torch.cuda.is_available():
 
 print("[SEED] Random seed:", seed)
 
-def test_model():
-    print("1. Loading DEU_Flensburg-41_1_T-1.xml...")
-    xml_path = os.path.join(project_root, "data", "scenarios", "DEU_Flensburg-41_1_T-1.xml")
-    scenario, pp_set = CommonRoadFileReader(xml_path).open()
+
+@pytest.mark.parametrize(
+    "scenario_path",
+    SCENARIO_FILES,
+    ids=lambda path: path.stem
+)
+def test_model(scenario_path):
+
+    scenario_name = scenario_path.stem
+
+    # Create plot output directory
+    plot_dir = Path(project_root) / "plots" / "diffusion_es"
+    plot_dir.mkdir(parents=True, exist_ok=True)
+
+    plot_path = plot_dir / f"{scenario_name}_trajectory.png"
+
+    print(f"\n1. Loading {scenario_name}...")
+
+    scenario, pp_set = CommonRoadFileReader(
+        str(scenario_path)
+    ).open()
+
     planning_problem = list(pp_set.planning_problem_dict.values())[0]
 
     print("2. Extracting Vector Tensors...")
@@ -269,9 +299,17 @@ def test_model():
     print("\n========== LOCAL TRAJECTORY DIAGNOSTICS ==========")
     print("Raw output shape:", raw_trajectories.shape)
     print("Reshaped output shape:", multimodal_trajectories.shape)
-    print("First trajectory shape:", local_traj.shape)
-    print("First predicted pose:", local_traj[0])
-    print("Final predicted pose:", local_traj[-1])
+    print("Selected candidate index:", best_idx)
+    print("Selected trajectory shape:", local_traj.shape)
+    print("Selected first pose:", local_traj[0])
+    print("Selected final pose:", local_traj[-1])
+    print(
+        "Selected final heading (wrapped):",
+        np.arctan2(
+            np.sin(local_traj[-1, 2]),
+            np.cos(local_traj[-1, 2])
+        )
+    )
     print("Local goal:", goal_tensor.numpy())
 
     final_xy = local_traj[-1, :2]
@@ -403,8 +441,18 @@ def test_model():
 
     plt.legend()
 
-    plt.title("Conditional Diffusion-ES Multimodal Output")
+    plt.title(f"Diffusion-ES Trajectory - {scenario_name}")
+
+    plt.savefig(
+        plot_path,
+        dpi=300,
+        bbox_inches="tight"
+    )
+
+    print(f"[PLOT] Saved trajectory to: {plot_path}")
+
     plt.show()
+    plt.close()
 
 if __name__ == "__main__":
     test_model()

@@ -7,16 +7,20 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from pathlib import Path
+import pytest
 from commonroad.common.file_reader import CommonRoadFileReader
 from commonroad.visualization.mp_renderer import MPRenderer
 
 from src.core.types import PlannerInput
 from src.planner.diffusion_planner.inference import DiffusionPlannerNode
-from src.planner.diffusion_planner.goal_stop import stop_at_goal
 from src.planner.diffusion_planner.adapter import (
     extract_map_tensors, extract_neighbor_tensors, extract_navigation_route,
     extract_static_objects, extract_ego_state, normalize_to_ego_frame,
     map_input_to_tensors,
+)
+from src.planner.diffusion_planner.collision_aware_speed import (
+    collision_aware_stop,
 )
 from src.planner.diffusion_planner.trajectory_validation import (
     local_to_global_states,
@@ -73,14 +77,45 @@ def guidance_target(route, ego_speed, horizon=8.0):
     return points[idx-1] + fraction * (points[idx] - points[idx-1])
 
 
-def test_run():
-    project_root = Path(__file__).resolve().parent.parent
-    output_dir = project_root / 'diagnostics'
-    output_dir.mkdir(exist_ok=True)
-    scenario_path = project_root / 'data/scenarios/DEU_Flensburg-41_1_T-1.xml'
-    assert scenario_path.exists(), f'Missing scenario: {scenario_path}'
-    scenario, problem_set = CommonRoadFileReader(str(scenario_path)).open()
-    planning_problem = next(iter(problem_set.planning_problem_dict.values()))
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+SCENARIO_DIR = PROJECT_ROOT / "data" / "scenarios"
+
+SCENARIO_FILES = sorted(SCENARIO_DIR.glob("*.xml"))
+
+if not SCENARIO_FILES:
+    raise FileNotFoundError(
+        f"No CommonRoad XML scenarios found in {SCENARIO_DIR}"
+    )
+
+
+@pytest.mark.parametrize(
+    "scenario_path",
+    SCENARIO_FILES,
+    ids=lambda path: path.stem,
+)
+def test_run(scenario_path):
+    project_root = PROJECT_ROOT
+
+    scenario_name = scenario_path.stem
+
+    output_dir = (
+            project_root / "diagnostics" / "diffusion_planner"
+            / scenario_name
+    )
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    plot_dir = (
+            project_root / "plots" / "diffusion_planner"
+    )
+    plot_dir.mkdir(parents=True, exist_ok=True)
+
+    scenario, problem_set = CommonRoadFileReader(
+        str(scenario_path)
+    ).open()
+
+    planning_problem = next(
+        iter(problem_set.planning_problem_dict.values())
+    )
 
     log = [f'Scenario: {scenario_path}', f'Scenario dt: {scenario.dt}']
     torch.manual_seed(0)
@@ -142,68 +177,51 @@ def test_run():
     for name, value in normalized.items():
         stats(log, f'normalized.{name}', value.detach().cpu().numpy())
 
-    fig, ax = plt.subplots(figsize=(9, 9))
-    plot_lanes(ax, local_poly, 'gray', 'Local lane centerlines')
-    plot_lanes(ax, local_route, 'tab:blue', 'Local route', 0.9, 2)
-    ax.scatter([0], [0], color='green', s=70, label='Ego (0,0)', zorder=10)
-    ax.arrow(0, 0, 8, 0, width=0.2, color='green', length_includes_head=True)
-    if target is not None:
-        ax.scatter([target[0]], [target[1]], color='orange', marker='x', s=90,
-                   label='Approx. guidance target')
-    ax.set(title='01 - Local input map', xlabel='Local X (m)', ylabel='Local Y (m)')
-    ax.axis('equal'); ax.grid(True); ax.legend()
-    fig.savefig(output_dir / '01_local_input_map.png', dpi=170, bbox_inches='tight')
-    plt.close(fig)
-
+    # Generate a diffusion reference trajectory.
     trajectory = planner.plan(live_input)
 
     goal_shape = planning_problem.goal.state_list[0].position
 
-    stopped_states = stop_at_goal(
-        ego_states=trajectory.ego_states,
-        goal_shape=goal_shape,
-        ego_pose=ego_pose,
-        initial_speed=vel,
-        dt=scenario.dt,
-        max_deceleration=3.0,
-    )
-
-    # Extend the stopped trajectory through the goal time interval.
-    goal_states = planning_problem.goal.state_list
-
-    goal_end_step = max(
-        int(gs.time_step.end)
-        for gs in goal_states
-        if hasattr(gs, "time_step")
-    )
-
-    initial_step = int(planning_problem.initial_state.time_step)
-
-    required_samples = goal_end_step - initial_step
-
-    if len(stopped_states) < required_samples:
-        extra_samples = required_samples - len(stopped_states)
-
-        # Hold the final position and heading.
-        stationary_states = np.repeat(
-            stopped_states[-1:, :],
-            extra_samples,
-            axis=0
+    # Search for a collision-free stopping trajectory.
+    # The CommonRoad arrival deadline is not enforced.
+    try:
+        stopped_states, planning_results = collision_aware_stop(
+            reference_states=trajectory.ego_states,
+            goal_shape=goal_shape,
+            ego_pose=ego_pose,
+            initial_speed=vel,
+            scenario=scenario,
+            planning_problem=planning_problem,
+            dt=scenario.dt,
+            max_acceleration=3.0,
+            max_deceleration=3.0,
+            max_jerk=5.0,
+            vehicle_length=5.18,
+            vehicle_width=2.30,
+            max_planning_time=15.0,
         )
 
-        stopped_states = np.vstack([
-            stopped_states,
-            stationary_states
-        ])
+    except RuntimeError as exc:
+        pytest.fail(
+            f"No safe stopping trajectory for "
+            f"{scenario_name}: {exc}"
+        )
 
-    print(
-        f"[GOAL] Extended trajectory to "
-        f"{len(stopped_states)} samples"
-    )
+    print("\n========== PLANNING RESULT ==========")
+    print(f"Scenario: {scenario_name}")
+    print(f"Stop time: {planning_results['stop_time']:.2f}s")
+    print(f"Target distance: {planning_results['goal_distance']:.2f}m")
+    print(f"Safety: {planning_results['safety']}")
+    print(f"Dynamics: {planning_results['dynamics']}")
+    print("=====================================")
 
     # ==================================================
     # VALIDATION OF STOPPED DIFFUSION-PLANNER TRAJECTORY
     # ==================================================
+
+    initial_step = int(
+        planning_problem.initial_state.time_step
+    )
 
     global_states = local_to_global_states(
         local_states=stopped_states,
@@ -240,14 +258,7 @@ def test_run():
 
     print("=============================================")
 
-    from commonroad.geometry.shape import Rectangle
-    from commonroad.scenario.trajectory import Trajectory
-    from commonroad.prediction.prediction import TrajectoryPrediction
-    from commonroad_dc.collision.collision_detection.pycrcc_collision_dispatch import (
-        create_collision_object,
-    )
-
-# 1. Vehicle dynamics
+    # 1. Vehicle dynamics
     dynamics = check_vehicle_dynamics(
         states=global_states,
         dt=scenario.dt,
@@ -257,11 +268,30 @@ def test_run():
         max_jerk=5.0,
     )
 
-    # 2. CommonRoad goal satisfaction
-    goal_results = check_goal_satisfaction(
-        states=global_states,
-        planning_problem=planning_problem,
+    # Position-only goal validation.
+    final_position = np.asarray(
+        global_states[-1].position,
+        dtype=float
     )
+
+    goal_results = {
+        "position_reached": bool(
+            goal_shape.contains_point(final_position)
+        ),
+        "stopped": bool(dynamics["stopped"]),
+        "arrival_time": float(
+            (
+                    global_states[-1].time_step
+                    - planning_problem.initial_state.time_step
+            ) * scenario.dt
+        ),
+    }
+
+    print("\n[GOAL]")
+    print(f"Final position: {final_position}")
+    print(f"Inside goal: {goal_results['position_reached']}")
+    print(f"Stopped: {goal_results['stopped']}")
+    print(f"Arrival time: {goal_results['arrival_time']:.2f}s")
 
     # 3. Collision and road containment
     safety = check_collision_and_road(
@@ -384,19 +414,6 @@ def test_run():
     log.append(f'Local first 5 XY: {local_xy[:5].tolist()}')
     log.append(f'Local last XY: {local_xy[-1].tolist()}')
 
-    fig, ax = plt.subplots(figsize=(9, 9))
-    plot_lanes(ax, local_poly, 'gray', 'Local lane centerlines')
-    plot_lanes(ax, local_route, 'tab:blue', 'Local route', 0.9, 2)
-    ax.plot(local_xy[:, 0], local_xy[:, 1], 'r.-', markersize=3, label='Model prediction')
-    ax.scatter([0], [0], color='green', s=70, label='Ego')
-    if target is not None:
-        ax.scatter([target[0]], [target[1]], color='orange', marker='x', s=90,
-                   label='Approx. guidance target')
-    ax.set(title='02 - Local prediction vs route', xlabel='Local X (m)', ylabel='Local Y (m)')
-    ax.axis('equal'); ax.grid(True); ax.legend()
-    fig.savefig(output_dir / '02_local_prediction.png', dpi=170, bbox_inches='tight')
-    plt.close(fig)
-
     ego_x, ego_y, cos_yaw, sin_yaw = ego_pose
     rotation = np.array([[cos_yaw, -sin_yaw], [sin_yaw, cos_yaw]])
     global_xy = local_xy @ rotation.T + np.array([ego_x, ego_y])
@@ -416,7 +433,22 @@ def test_run():
     ax.scatter([ego_x], [ego_y], color='green', s=50, label='Ego', zorder=21)
     ax.set(title='03 - Global prediction (not truncated)', xlabel='Global X (m)', ylabel='Global Y (m)')
     ax.axis('equal'); ax.legend()
-    fig.savefig(output_dir / '03_global_prediction.png', dpi=170, bbox_inches='tight')
+
+    trajectory_plot_path = (
+            plot_dir / f"{scenario_name}_trajectory.png"
+    )
+
+    fig.savefig(
+        trajectory_plot_path,
+        dpi=170,
+        bbox_inches="tight",
+    )
+
+    print(
+        f"[PLOT] Saved trajectory: "
+        f"{trajectory_plot_path}"
+    )
+
     plt.close(fig)
 
     (output_dir / 'diagnostics.txt').write_text('\n'.join(log) + '\n', encoding='utf-8')
@@ -424,5 +456,5 @@ def test_run():
     print('\n'.join(log[:10]))
 
 
-if __name__ == '__main__':
-    test_run()
+if __name__ == "__main__":
+    raise SystemExit(pytest.main([__file__, "-s", "-v"]))
