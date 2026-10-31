@@ -109,6 +109,64 @@ def check_vehicle_dynamics(
     return results
 
 
+def get_collision_details(
+        scenario,
+        states,
+        vehicle_length=5.18,
+        vehicle_width=2.30,
+):
+    """
+    Return collision times and obstacle IDs for a
+    candidate trajectory.
+    """
+    from commonroad.geometry.shape import Rectangle
+    from commonroad.scenario.trajectory import Trajectory
+    from commonroad.prediction.prediction import TrajectoryPrediction
+    from commonroad_dc.collision.collision_detection.pycrcc_collision_dispatch import (
+        create_collision_object,
+    )
+
+    ego_shape = Rectangle(
+        length=vehicle_length,
+        width=vehicle_width,
+    )
+
+    details = []
+
+    for state in states:
+        trajectory = Trajectory(
+            initial_time_step=state.time_step,
+            state_list=[state],
+        )
+
+        prediction = TrajectoryPrediction(
+            trajectory=trajectory,
+            shape=ego_shape,
+        )
+
+        ego_collision = create_collision_object(prediction)
+
+        for obstacle in scenario.obstacles:
+            obstacle_collision = create_collision_object(obstacle)
+
+            if ego_collision.collide(obstacle_collision):
+                details.append({
+                    "time_step": int(state.time_step),
+                    "time_seconds": float(
+                        state.time_step * scenario.dt
+                    ),
+                    "obstacle_id": int(
+                        obstacle.obstacle_id
+                    ),
+                    "ego_position": (
+                        np.asarray(
+                            state.position
+                        ).tolist()
+                    ),
+                })
+
+    return details
+
 def check_goal_satisfaction(states, planning_problem):
     """
     Evaluate CommonRoad goal constraints using its
