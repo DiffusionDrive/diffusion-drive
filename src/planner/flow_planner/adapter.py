@@ -1492,7 +1492,9 @@ class FlowPlannerCommonRoadAdapter:
         Validation remains sampled-footprint based, not a full safety proof.
         """
         from commonroad.scenario.state import InitialState
+        from time import perf_counter
 
+        self.last_cycle_latencies = []
         if replan_steps < 1 or max_cycles < 1 or num_candidates < 1:
             raise ValueError("replan_steps, max_cycles and num_candidates must be positive")
 
@@ -1524,6 +1526,7 @@ class FlowPlannerCommonRoadAdapter:
                 break
 
             print(f"\n========== REPLANNING CYCLE {cycle} ========== ")
+            cycle_start = perf_counter()
             choices = []
             for candidate_id in range(num_candidates):
                 candidate_seed = seed + cycle * num_candidates + candidate_id
@@ -1680,6 +1683,10 @@ class FlowPlannerCommonRoadAdapter:
                 score, n, chosen_id, segment = max(
                     choices, key=lambda c: (c[0], c[1], str(c[2]))
                 )
+            cycle_latency = perf_counter() - cycle_start
+            self.last_cycle_latencies.append(cycle_latency)
+            print(f"[LATENCY] Cycle {cycle}: {cycle_latency * 1000:.2f} ms "
+                  f"(candidate generation + validation + selection)")
             previous_position = (
                 np.asarray(current_state.position, dtype=float)
                 if n == 1 else segment[-2, :2]
@@ -1717,4 +1724,8 @@ class FlowPlannerCommonRoadAdapter:
         print(f"[REPLAN] Goal region reached: {self.last_goal_region_reached}; "
               f"target reached: {self.last_target_reached}")
         print(f"[REPLAN] Final status: {self.last_plan_status}")
+        if self.last_cycle_latencies:
+            times = np.asarray(self.last_cycle_latencies, dtype=float)
+            print(f"[LATENCY] Mean replanning latency: {times.mean() * 1000:.2f} ms "
+                  f"over {len(times)} cycles; max: {times.max() * 1000:.2f} ms")
         return np.asarray(executed, dtype=float)

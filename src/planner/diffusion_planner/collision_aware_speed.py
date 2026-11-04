@@ -303,6 +303,8 @@ def collision_aware_stop(
         vehicle_length=5.18,
         vehicle_width=2.30,
         max_planning_time=30.0,
+        current_time_step=None,
+        verbose=False,
 ):
     """
     Search collision-free stopping profiles along a fixed
@@ -416,26 +418,28 @@ def collision_aware_stop(
     goal_distance = float(arc[goal_idx])
     target_world = world_path[goal_idx]
 
-    print("\n========== FAR-END GOAL TARGET ==========")
-    print(f"Goal entry: {world_path[entry_idx]}")
-    print(f"Goal exit: {world_path[exit_idx]}")
-    print(f"Selected target: {target_world}")
-    print(f"Distance along path: {goal_distance:.3f} m")
-    print(f"Margin from exit: {exit_arc - goal_distance:.3f} m")
-    print("=========================================")
+    if verbose:
+        print("\n========== FAR-END GOAL TARGET ==========")
+    if verbose: print(f"Goal entry: {world_path[entry_idx]}")
+    if verbose: print(f"Goal exit: {world_path[exit_idx]}")
+    if verbose: print(f"Selected target: {target_world}")
+    if verbose: print(f"Distance along path: {goal_distance:.3f} m")
+    if verbose: print(f"Margin from exit: {exit_arc - goal_distance:.3f} m")
+    if verbose: print("=========================================")
 
 
     # No CommonRoad arrival-time constraint.
     # Time is still needed for dynamic obstacle predictions.
-    initial_step = int(planning_problem.initial_state.time_step)
+    initial_step = (int(current_time_step) if current_time_step is not None
+                    else int(planning_problem.initial_state.time_step))
 
     horizon_steps = int(np.ceil(max_planning_time / dt))
 
     horizon = horizon_steps * dt
     times = np.arange(1, horizon_steps + 1) * dt
 
-    print(f"[PLANNER] Maximum planning duration: {horizon:.1f}s")
-    print("[PLANNER] CommonRoad goal deadline: ignored")
+    if verbose: print(f"[PLANNER] Maximum planning duration: {horizon:.1f}s")
+    if verbose: print("[PLANNER] CommonRoad goal deadline: ignored")
 
 
     if horizon_steps <= 0:
@@ -446,8 +450,13 @@ def collision_aware_stop(
     # Search stopping times in increments of dt.
     # Candidate profiles must stop before the goal
     # deadline and remain stopped afterward.
+    # Avoid testing hundreds of near-identical infeasible stopping times.
+    # Minimum physically plausible braking duration, with a small buffer.
+    min_stop_time = max(dt, float(initial_speed) / max(float(max_deceleration), 1e-6))
+    stop_time_increment = max(dt, 0.25)
     stop_times = np.arange(
-        dt, horizon + dt * 0.5, dt
+        np.ceil(min_stop_time / dt) * dt, horizon + dt * 0.5,
+        stop_time_increment
     )
 
     best = None
@@ -619,22 +628,37 @@ def collision_aware_stop(
                 )
 
 
-    print("\n========== SPEED PROFILE REJECTIONS ==========")
-    print(f"Target distance: {goal_distance:.3f} m")
-    print(f"Initial speed: {initial_speed:.3f} m/s")
-    print(f"Available horizon: {horizon:.2f} s")
-    print(f"Candidates tested: {len(stop_times)}")
+    if verbose: print("\n========== SPEED PROFILE REJECTIONS ==========")
+    if verbose: print(f"Target distance: {goal_distance:.3f} m")
+    if verbose: print(f"Initial speed: {initial_speed:.3f} m/s")
+    if verbose: print(f"Available horizon: {horizon:.2f} s")
+    if verbose: print(f"Candidates tested: {len(stop_times)}")
 
     for reason, count in rejection_counts.items():
-        print(f"{reason}: {count}")
+        if verbose: print(f"{reason}: {count}")
 
-    print("==============================================")
+    if verbose: print("==============================================")
+
+    if best is not None:
+        return best[1], best[2]
+
+    # A stationary ego must not enter a cruise/brake profile that divides by v0.
+    # A stationary-to-goal acceleration profile is a separate planning problem;
+    # if quintic search found no feasible solution, report it to the receding
+    # planner so it can sample new diffusion geometry and restart safely.
+    if initial_speed <= 1e-6:
+        if best is not None:
+            return best[1], best[2]
+        raise RuntimeError(
+            "No feasible stationary-start goal profile. "
+            "Request another diffusion prediction or a validated restart."
+        )
 
     # Additional candidate profiles: cruise then brake.
     cruise_times = np.arange(
         0.0,
         min(goal_distance / initial_speed, horizon),
-        dt,
+        max(dt, 0.25),
     )
 
     cruise_rejections = {
@@ -765,10 +789,11 @@ def collision_aware_stop(
             max_jerk=max_jerk,
         )
 
-        goal = check_goal_satisfaction(
-            states=global_states,
-            planning_problem=planning_problem,
-        )
+        # Position-only goal: the original CommonRoad deadline is ignored.
+        reached = bool(goal_shape.contains_point(
+            np.asarray(global_states[-1].position, dtype=float)))
+        goal = {"goal_reached": reached,
+                "final_state_satisfies_goal": reached}
 
         safety = check_collision_and_road(
             scenario=scenario,
@@ -797,7 +822,7 @@ def collision_aware_stop(
 
             # Print details for a small number of candidates
             # to avoid excessive diagnostic output.
-            if cruise_rejections["collision"] <= 3:
+            if verbose and cruise_rejections["collision"] <= 3:
                 details = get_collision_details(
                     scenario=scenario,
                     states=global_states,
@@ -825,7 +850,7 @@ def collision_aware_stop(
             cruise_rejections["accepted"] += 1
 
         if accepted:
-            print(
+            if verbose: print(
                 f"[CRUISE-BRAKE] Valid candidate found: "
                 f"cruise={cruise_time:.2f}s, "
                 f"stop={stop_time:.2f}s"
@@ -846,19 +871,19 @@ def collision_aware_stop(
                     },
                 )
 
-    print("\n========== CRUISE-BRAKE REJECTIONS ==========")
+    if verbose: print("\n========== CRUISE-BRAKE REJECTIONS ==========")
     for reason, count in cruise_rejections.items():
-        print(f"{reason}: {count}")
-    print("============================================")
+        if verbose: print(f"{reason}: {count}")
+    if verbose: print("============================================")
 
-    print("\n========== FINAL PROFILE SEARCH ==========")
+    if verbose: print("\n========== FINAL PROFILE SEARCH ==========")
 
     if best is None:
-        print("[FAILED] No feasible stopping profile found.")
-        print(f"Target distance: {goal_distance:.3f} m")
-        print(f"Initial speed: {initial_speed:.3f} m/s")
-        print(f"Available time: {horizon:.2f} s")
-        print("==========================================")
+        if verbose: print("[FAILED] No feasible stopping profile found.")
+        if verbose: print(f"Target distance: {goal_distance:.3f} m")
+        if verbose: print(f"Initial speed: {initial_speed:.3f} m/s")
+        if verbose: print(f"Available time: {horizon:.2f} s")
+        if verbose: print("==========================================")
 
         raise RuntimeError(
             "No feasible stopping profile found for the "
@@ -866,12 +891,12 @@ def collision_aware_stop(
             "cruise-then-brake candidates failed validation."
         )
 
-    print(f"[SUCCESS] Stop time: {best[0]:.2f}s")
-    print(
+    if verbose: print(f"[SUCCESS] Stop time: {best[0]:.2f}s")
+    if verbose: print(
         f"Profile: "
         f"{best[2].get('profile_type', 'quintic')}"
     )
-    print(f"Goal distance: {goal_distance:.3f} m")
-    print("==========================================")
+    if verbose: print(f"Goal distance: {goal_distance:.3f} m")
+    if verbose: print("==========================================")
 
     return best[1], best[2]

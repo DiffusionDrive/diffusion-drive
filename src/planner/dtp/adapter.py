@@ -190,6 +190,40 @@ def goal_center(
             "Adjust end_margin or inspect goal geometry."
         )
 
+    # Search for a nearby target that admits the *entire* ego footprint on road.
+    # Prefer the far end of the goal but never force the car onto the shoulder.
+    from shapely.geometry import Polygon
+    road_polys = []
+    for lane in scenario.lanelet_network.lanelets:
+        lane_poly = Polygon(np.vstack([lane.left_vertices, lane.right_vertices[::-1]]))
+        if not lane_poly.is_valid:
+            lane_poly = lane_poly.buffer(0)
+        if not lane_poly.is_empty:
+            road_polys.append(lane_poly)
+    road = unary_union(road_polys).buffer(0.05)
+    yaw = float(np.arctan2(forward[1], forward[0]))
+    right = np.array([-forward[1], forward[0]])
+    length, width = 4.5, 1.8
+    corners = np.array([[length/2, width/2], [length/2, -width/2],
+                        [-length/2, -width/2], [-length/2, width/2]])
+    rotation = np.array([[np.cos(yaw), -np.sin(yaw)],
+                         [np.sin(yaw), np.cos(yaw)]])
+    # Prefer positions close to the original far-edge target. Scan inward
+    # longitudinally, and across the goal laterally, at 0.25 m resolution.
+    feasible = []
+    for back in np.arange(0.0, 7.01, 0.25):
+        for sideways in np.arange(-2.0, 2.01, 0.25):
+            xy = target - back * forward + sideways * right
+            if not polygon.covers(Point(xy)):
+                continue
+            footprint = Polygon(corners @ rotation.T + xy)
+            if road.covers(footprint):
+                feasible.append((back + 0.5 * abs(sideways), xy))
+    if feasible:
+        target = min(feasible, key=lambda item: item[0])[1]
+    else:
+        print('[DTP GOAL WARNING] No full-footprint drivable target found; '
+              'retaining the original goal target for diagnostics.')
     return np.asarray(target, dtype=float)
 
 

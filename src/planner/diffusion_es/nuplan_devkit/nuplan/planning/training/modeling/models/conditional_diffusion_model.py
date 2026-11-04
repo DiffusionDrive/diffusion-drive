@@ -44,39 +44,39 @@ from src.planner.diffusion_es.nuplan_devkit.nuplan.planning.training.preprocessi
 
 class ConditionalDiffusionModel(UrbanDriverOpenLoopModel):
     def __init__(
-        self,
+            self,
 
-        model_params,
-        feature_params,
-        target_params,
+            model_params,
+            feature_params,
+            target_params,
 
-        T: int = 100,
-        predictions_per_sample: int = 4,
+            T: int = 100,
+            predictions_per_sample: int = 4,
 
-        num_encoder_layers: int = 2,
-        num_trajectory_decoder_layers: int = 2,
-        num_global_decoder_layers: int = 2,
+            num_encoder_layers: int = 2,
+            num_trajectory_decoder_layers: int = 2,
+            num_global_decoder_layers: int = 2,
 
-        use_loss_weight: bool = True,
-        use_weight_init: bool = True,
+            use_loss_weight: bool = True,
+            use_weight_init: bool = True,
 
-        unconditional: bool = False,    # ignores scene tokens
-        use_relative: bool = False,     # use relative temporal attention over trajectory features, removes absolute temporal embeddings for traj
-        load_checkpoint_path: str = '',
+            unconditional: bool = False,    # ignores scene tokens
+            use_relative: bool = False,     # use relative temporal attention over trajectory features, removes absolute temporal embeddings for traj
+            load_checkpoint_path: str = '',
 
-        max_dist: float = 50,           # used to normalize ALL tokens (incl. trajectory)
-        use_noise_token: bool = True,   # concat "noise level" token when self-attending, otherwise add to all tokens
-        use_positional_encodings: bool = True,
+            max_dist: float = 50,           # used to normalize ALL tokens (incl. trajectory)
+            use_noise_token: bool = True,   # concat "noise level" token when self-attending, otherwise add to all tokens
+            use_positional_encodings: bool = True,
 
-        use_verlet: bool = True         # use Verlet action wrapping
+            use_verlet: bool = True         # use Verlet action wrapping
     ):
         super().__init__(model_params, feature_params, target_params)
 
         self.feature_builders = [
             AgentHistoryFeatureBuilder(
-                    trajectory_sampling=feature_params.past_trajectory_sampling,
-                    max_agents=feature_params.max_agents
-                ),
+                trajectory_sampling=feature_params.past_trajectory_sampling,
+                max_agents=feature_params.max_agents
+            ),
             VectorSetMapFeatureBuilder(
                 map_features=feature_params.map_features,
                 max_elements=feature_params.max_elements,
@@ -99,7 +99,7 @@ class ConditionalDiffusionModel(UrbanDriverOpenLoopModel):
 
         self.T = T
         self.H = target_params.future_trajectory_sampling.num_poses
-        
+
         self.unconditional = unconditional
         self.use_relative = use_relative
         self.predictions_per_sample = predictions_per_sample
@@ -131,21 +131,21 @@ class ConditionalDiffusionModel(UrbanDriverOpenLoopModel):
 
         self.map_layers = torch.nn.ModuleList([
             ParallelAttentionLayer(
-                d_model=self.feature_dim, 
+                d_model=self.feature_dim,
                 self_attention1=True, self_attention2=False,
                 cross_attention1=False, cross_attention2=False,
                 rotary_pe=use_positional_encodings
             )
-        for _ in range(2)])
+            for _ in range(2)])
 
         self.encoder_layers = torch.nn.ModuleList([
             ParallelAttentionLayer(
-                d_model=self.feature_dim, 
+                d_model=self.feature_dim,
                 self_attention1=True, self_attention2=False,
                 cross_attention1=False, cross_attention2=False,
                 rotary_pe=use_positional_encodings
             )
-        for _ in range(num_encoder_layers)])
+            for _ in range(num_encoder_layers)])
 
         self.trajectory_dim = 3
         self.trajectory_encoder = nn.Linear(self.trajectory_dim, self.feature_dim)
@@ -156,21 +156,21 @@ class ConditionalDiffusionModel(UrbanDriverOpenLoopModel):
         # Decoder layers
         self.decoder_layers = torch.nn.ModuleList([
             ParallelAttentionLayer(
-                d_model=self.feature_dim, 
+                d_model=self.feature_dim,
                 self_attention1=True, self_attention2=False,
                 cross_attention1=True, cross_attention2=False,
                 rotary_pe=use_positional_encodings
             )
-        for _ in range(num_trajectory_decoder_layers)])
+            for _ in range(num_trajectory_decoder_layers)])
 
         self.global_attention_layers = torch.nn.ModuleList([
             ParallelAttentionLayer(
-                d_model=self.feature_dim, 
+                d_model=self.feature_dim,
                 self_attention1=True, self_attention2=False,
                 cross_attention1=False, cross_attention2=False,
                 rotary_pe=use_positional_encodings
             )
-        for _ in range(num_global_decoder_layers)])
+            for _ in range(num_global_decoder_layers)])
 
         self.decoder_mlp = nn.Sequential(
             nn.Linear(self.feature_dim, self.feature_dim),
@@ -235,18 +235,18 @@ class ConditionalDiffusionModel(UrbanDriverOpenLoopModel):
 
         if self.training:
             noise = torch.randn(ego_gt_trajectory.shape, device=ego_gt_trajectory.device)
-            timesteps = torch.randint(0, self.scheduler.config.num_train_timesteps, (ego_gt_trajectory.shape[0],), 
-                                        device=ego_gt_trajectory.device).long()
+            timesteps = torch.randint(0, self.scheduler.config.num_train_timesteps, (ego_gt_trajectory.shape[0],),
+                                      device=ego_gt_trajectory.device).long()
 
             ego_noisy_trajectory = self.scheduler.add_noise(ego_gt_trajectory, noise, timesteps)
 
             pred_noise = self.denoise(
-                ego_noisy_trajectory, 
-                timesteps, 
-                scene_features, 
+                ego_noisy_trajectory,
+                timesteps,
+                scene_features,
                 scene_feature_masks
             )
-            
+
             output = {
                 # TODO: fix trajectory, right now we only care about epsilon at training and this is a dummy value
                 "trajectory": Trajectory(data=convert_predictions_to_trajectory(pred_noise)),
@@ -268,13 +268,13 @@ class ConditionalDiffusionModel(UrbanDriverOpenLoopModel):
             # Sampling / inference
             ego_trajectory = torch.randn((batch_size * self.predictions_per_sample, self.H * 3), device=scene_features[0].device)
             timesteps = self.scheduler.timesteps
-            
+
             intermediate_trajectories = []
 
             for t in timesteps:
                 with torch.no_grad():
                     residual = self.denoise(
-                        ego_trajectory, 
+                        ego_trajectory,
                         t.to(ego_trajectory.device),
                         scene_features,
                         scene_feature_masks
@@ -299,7 +299,7 @@ class ConditionalDiffusionModel(UrbanDriverOpenLoopModel):
                 "multimodal_trajectories": ego_trajectory,
                 "intermediate": intermediate_trajectories
             }
-        
+
     def extract_agent_features(self, agent_history):
         ego_features = agent_history.ego
         agent_features = agent_history.data
@@ -331,7 +331,7 @@ class ConditionalDiffusionModel(UrbanDriverOpenLoopModel):
         # Extract features across batch
         agent_features, agent_avails, agent_positions = self.extract_agent_features(ego_agent_features)
         map_features, map_avails, map_positions = self.extract_map_features(vector_set_map_data, batch_size, return_positions=True)
-        
+
         # Normalize features
         agent_features[...,:2] /= self.max_dist    # x,y
         agent_features[...,3:5] /= self.max_dist   # vx,vy
@@ -348,7 +348,7 @@ class ConditionalDiffusionModel(UrbanDriverOpenLoopModel):
         map_avails = map_avails * (map_features[...,:2].norm(dim=-1) <= cutoff_ratio)
         agent_features[~agent_avails] = 0
         map_features[~map_avails] = 0
-        
+
         features = torch.cat([agent_features, map_features], dim=1)
         avails = torch.cat([agent_avails, map_avails], dim=1)
         positions = torch.cat([agent_positions, map_positions], dim=1)
@@ -474,13 +474,13 @@ class ConditionalDiffusionModel(UrbanDriverOpenLoopModel):
         out = self.decoder_mlp(trajectory_features).reshape(trajectory_features.shape[0],-1)
 
         return out
-    
+
     def run_diffusion_es(
-        self, 
-        features: FeaturesType, 
-        warm_start = None,
-        cem_iters=20,
-        temperature=0.1,
+            self,
+            features: FeaturesType,
+            warm_start = None,
+            cem_iters=20,
+            temperature=0.1,
     ) -> TargetsType:
         # Recover features
         ego_agent_features = cast(AgentHistory, features["agent_history"])
@@ -496,11 +496,11 @@ class ConditionalDiffusionModel(UrbanDriverOpenLoopModel):
 
         # Multiple predictions per sample
         state_features = (
-                state_features[0].repeat_interleave(self.predictions_per_sample,0),
-                state_features[1].repeat_interleave(self.predictions_per_sample,0),
-                state_features[2].repeat_interleave(self.predictions_per_sample,0),
-                state_features[3].repeat_interleave(self.predictions_per_sample,0),
-            )
+            state_features[0].repeat_interleave(self.predictions_per_sample,0),
+            state_features[1].repeat_interleave(self.predictions_per_sample,0),
+            state_features[2].repeat_interleave(self.predictions_per_sample,0),
+            state_features[3].repeat_interleave(self.predictions_per_sample,0),
+        )
         ego_agent_features = ego_agent_features.repeat_interleave(self.predictions_per_sample,0)
         state_feature_masks = state_feature_masks.repeat_interleave(self.predictions_per_sample,0)
 
@@ -512,7 +512,7 @@ class ConditionalDiffusionModel(UrbanDriverOpenLoopModel):
 
         use_warm_start = warm_start is not None
 
-        # Initialize elite set with random 
+        # Initialize elite set with random
         noise = torch.randn(trajectory_shape, device=device)
         population_trajectories, population_scores, population_info = self.rollout(
             features,
@@ -544,9 +544,15 @@ class ConditionalDiffusionModel(UrbanDriverOpenLoopModel):
             Local MPPI update
             """
             # Compute reward-probabilities
-            reward_probs = torch.exp(temperature * -population_scores)
-            reward_probs = reward_probs / reward_probs.sum()
-            probs = reward_probs
+            safe_scores = torch.nan_to_num(population_scores, nan=1e6,
+                                           posinf=1e6, neginf=-1e6)
+            probs = torch.softmax(-temperature * safe_scores, dim=0)
+            probs = torch.nan_to_num(probs, nan=0.0, posinf=0.0, neginf=0.0)
+            total_prob = probs.sum()
+            if not bool(torch.isfinite(total_prob)) or float(total_prob) <= 0.0:
+                probs = torch.full_like(probs, 1.0 / probs.numel())
+            else:
+                probs = probs / total_prob
 
             """
             Resample and mutate (renoise-denoise)
@@ -571,7 +577,9 @@ class ConditionalDiffusionModel(UrbanDriverOpenLoopModel):
             population_trajectories = torch.cat([population_trajectories, prev_trajectories], dim=0)
             population_scores, population_info = compute_constraint_scores(features['constraints'], population_trajectories)
 
-        best_trajectory = population_trajectories[population_scores.argmin()]
+        safe_final_scores = torch.nan_to_num(population_scores, nan=1e6,
+                                             posinf=1e6, neginf=-1e6)
+        best_trajectory = population_trajectories[safe_final_scores.argmin()]
         best_trajectory = best_trajectory.reshape(-1,16,3)
 
         return {
@@ -580,18 +588,18 @@ class ConditionalDiffusionModel(UrbanDriverOpenLoopModel):
             "scores": population_scores,
             "traj_sim": population_info['traj_sim'][...,:2]
         }
-    
+
     def rollout(
-        self,
-        features,
-        state_features,
-        state_feature_masks,
-        ego_trajectory,
-        initial_rollout=True, 
-        deterministic=True, 
-        n_trunc_steps=5, 
-        noise_scale=1.0, 
-        ablate_diffusion=False
+            self,
+            features,
+            state_features,
+            state_feature_masks,
+            ego_trajectory,
+            initial_rollout=True,
+            deterministic=True,
+            n_trunc_steps=5,
+            noise_scale=1.0,
+            ablate_diffusion=False
     ):
         if initial_rollout:
             timesteps = self.scheduler.timesteps
@@ -606,8 +614,8 @@ class ConditionalDiffusionModel(UrbanDriverOpenLoopModel):
 
             with torch.no_grad():
                 residual += self.denoise(
-                    ego_trajectory, 
-                    t.to(ego_trajectory.device), 
+                    ego_trajectory,
+                    t.to(ego_trajectory.device),
                     state_features,
                     state_feature_masks
                 )
@@ -618,7 +626,7 @@ class ConditionalDiffusionModel(UrbanDriverOpenLoopModel):
                 prev_alpha = self.scheduler.alphas[t-1]
                 alpha = self.scheduler.alphas[t]
                 eta = noise_scale * torch.sqrt((1 - prev_alpha) / (1 - alpha)) * \
-                        torch.sqrt((1 - alpha) / prev_alpha)
+                      torch.sqrt((1 - alpha) / prev_alpha)
 
             out = self.scheduler.step(residual, t, ego_trajectory, eta=eta)
             ego_trajectory = out.prev_sample

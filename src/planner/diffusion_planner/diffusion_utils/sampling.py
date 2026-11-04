@@ -13,7 +13,11 @@ def dpm_sampler(
     dpm_solver_params: Dict = {},
     sample_params: Dict = {},
 ):
-    with torch.no_grad():
+    # Classifier guidance needs gradients with respect to the noisy sample.
+    # Keep inference gradient-free when guidance is disabled.
+    guided = model_wrapper_params.get("guidance_type") == "classifier"
+    context = torch.enable_grad() if guided else torch.no_grad()
+    with context:
         noise_schedule = dpm.NoiseScheduleVP(schedule="linear", **noise_schedule_params)
 
         model_fn = dpm.model_wrapper(

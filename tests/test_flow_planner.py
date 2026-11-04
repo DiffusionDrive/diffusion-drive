@@ -1,6 +1,7 @@
 """Parameterized CommonRoad evaluation for the pretrained Flow-Planner adapter."""
 
 from pathlib import Path
+from time import perf_counter
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -21,11 +22,25 @@ SCENARIO_FILES = sorted(SCENARIO_DIR.glob("*.xml"))
 @pytest.fixture(scope="module")
 def adapter():
     """Load the pretrained model once for all scenarios in this test module."""
-    return FlowPlannerCommonRoadAdapter(
+    planner = FlowPlannerCommonRoadAdapter(
         config_path=str(PROJECT_ROOT / "checkpoints" / "flow_planner" / "model_config.yaml"),
         checkpoint_path=str(PROJECT_ROOT / "checkpoints" / "flow_planner" / "model.pth"),
         device="cuda" if torch.cuda.is_available() else "cpu",
     )
+    planner.latency_results = []
+    yield planner
+    print("\n========== ALL SCENARIOS: PLANNING LATENCY ==========")
+    for name, total, cycles in planner.latency_results:
+        mean_ms = float(np.mean(cycles) * 1000) if cycles else float("nan")
+        print(f"{name}: total={total:.3f}s, cycles={len(cycles)}, mean_cycle={mean_ms:.2f}ms")
+    if planner.latency_results:
+        totals = [item[1] for item in planner.latency_results]
+        all_cycles = [t for _, _, times in planner.latency_results for t in times]
+        print(f"Average total planning time per scenario: {np.mean(totals):.3f} s")
+        if all_cycles:
+            print(f"Average replanning latency (all cycles): {np.mean(all_cycles) * 1000:.2f} ms")
+            print(f"Maximum replanning latency: {np.max(all_cycles) * 1000:.2f} ms")
+    print("=====================================================\n")
 
 
 @pytest.mark.parametrize(
@@ -46,6 +61,7 @@ def test_run(scenario_path, adapter):
     assert planning_problems, f"{scenario_name}: no planning problem in XML"
     planning_problem = next(iter(planning_problems.values()))
 
+    planning_start = perf_counter()
     closed_loop_trajectory = np.asarray(
         adapter.plan_receding_horizon(
             scenario=scenario,
@@ -58,6 +74,11 @@ def test_run(scenario_path, adapter):
         dtype=float
     )
 
+    total_planning_seconds = perf_counter() - planning_start
+    cycle_latencies = list(adapter.last_cycle_latencies)
+    print(f"[LATENCY] Scenario planning time: {total_planning_seconds:.3f} s")
+    if cycle_latencies:
+        print(f"[LATENCY] Mean cycle latency: {np.mean(cycle_latencies) * 1000:.2f} ms")
     print(
         f"[TEST] Planning status: "
         f"{adapter.last_plan_status}"
@@ -115,6 +136,10 @@ def test_run(scenario_path, adapter):
     print("Goal region reached:", adapter.last_goal_region_reached)
     print("Target reached:", adapter.last_target_reached)
     print("======================================")
+
+    # Store timing results for the end-of-session summary.
+    adapter.latency_results = getattr(adapter, "latency_results", [])
+    adapter.latency_results.append((scenario_name, total_planning_seconds, cycle_latencies))
 
     fig, ax = plt.subplots(figsize=(12, 12))
     try:

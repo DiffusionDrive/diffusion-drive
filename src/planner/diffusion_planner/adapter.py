@@ -69,8 +69,9 @@ def extract_neighbor_tensors(scenario, current_time_step=0, max_agents=32, time_
 
     for i in range(num_agents):
         obs = obstacles[i]
-        length = obs.obstacle_shape.length
-        width = obs.obstacle_shape.width
+        shape = obs.obstacle_shape
+        length = float(getattr(shape, 'length', 2.0 * getattr(shape, 'radius', 0.5)))
+        width = float(getattr(shape, 'width', 2.0 * getattr(shape, 'radius', 0.5)))
 
         type_one_hot = [1.0, 0.0, 0.0]
         if obs.obstacle_type == ObstacleType.PEDESTRIAN:
@@ -144,64 +145,94 @@ def extract_static_objects(scenario, max_static=5):
     return static_tensor
 
 
-def extract_navigation_route(scenario, planning_problem, max_route_lanes=25, points_per_lane=20):
-    """Extracts sequential route lanelets leading to the goal region."""
+def select_initial_route_lanelet_ids(scenario, planning_problem):
+    """Resolve a route ONCE from the original planning problem.
+
+    Do not re-run RoutePlanner from a synthetic KSState every replan cycle:
+    some CommonRoad RoutePlanner versions require a full PlanningProblem and
+    can return a different branch or raise IndexError for synthetic states.
+    """
     from commonroad_route_planner.route_planner import RoutePlanner
-
-    route_lanes = np.zeros((max_route_lanes, points_per_lane, 12), dtype=np.float32)
-    route_speed_limit = np.zeros((max_route_lanes, 1), dtype=np.float32)
-    route_has_speed_limit = np.zeros((max_route_lanes, 1), dtype=bool)
-
-    try:
-        route_planner = RoutePlanner(scenario, planning_problem)
-        candidate_routes = route_planner.plan_routes()
-        if len(candidate_routes.retrieve_all_routes()) > 0:
-            route = candidate_routes.retrieve_first_route()
-            route_lanelet_ids = route.list_ids_lanelets
-            num_lanes = len(route_lanelet_ids)
-
-            for i in range(min(num_lanes, max_route_lanes)):
-                l_id = route_lanelet_ids[i]
-                let = scenario.lanelet_network.find_lanelet_by_id(l_id)
-                if let is None:
-                    continue
-
-                center = resample_polyline(let.center_vertices, points_per_lane)
-                left = resample_polyline(let.left_vertices, points_per_lane)
-                right = resample_polyline(let.right_vertices, points_per_lane)
-
-                for j in range(points_per_lane):
-                    cx, cy = center[j]
-                    dx = center[j + 1, 0] - cx if j < points_per_lane - 1 else cx - center[j - 1, 0]
-                    dy = center[j + 1, 1] - cy if j < points_per_lane - 1 else cy - center[j - 1, 1]
-
-                    lx, ly = left[j]
-                    rx, ry = right[j]
-
-                    route_lanes[i, j, 0:2] = [cx, cy]
-                    route_lanes[i, j, 2:4] = [dx, dy]
-                    route_lanes[i, j, 4:6] = [lx - cx, ly - cy]
-                    route_lanes[i, j, 6:8] = [rx - cx, ry - cy]
-
-                route_speed_limit[i, 0] = 15.0
-                route_has_speed_limit[i, 0] = True
+    planner = RoutePlanner(scenario, planning_problem)
+    candidates = planner.plan_routes()
+    routes = candidates.retrieve_all_routes()
+    if not routes:
+        raise ValueError('No route from the original start to the goal')
+    # Use the route selected by CommonRoad's planner; do not fabricate one.
+    route = candidates.retrieve_first_route()
+    ids = [int(x) for x in route.list_ids_lanelets]
+    if not ids:
+        raise ValueError('CommonRoad returned an empty route')
+    print(f'[ROUTE LOCK] Original route lanelets: {ids}')
+    return ids
 
 
-            # Leave unused route slots zero-padded.
-            # The route encoder detects empty slots from their geometry.
-            valid_route_count = min(num_lanes, max_route_lanes)
-
-            print(
-                f"[ROUTE] Actual lanelets: {num_lanes}, "
-                f"encoded: {valid_route_count}, "
-                f"padding: {max_route_lanes - valid_route_count}"
-            )
-            print(f"[ROUTE] Lanelet IDs: {route_lanelet_ids}")
-
-    except Exception as e:
-        print(f"Route extraction notice: {e}")
-
+def _lanelet_route_tensors(scenario, route_lanelet_ids, max_route_lanes, points_per_lane):
+    route_lanes = np.zeros((max_route_lanes, points_per_lane, 12), np.float32)
+    route_speed_limit = np.zeros((max_route_lanes, 1), np.float32)
+    route_has_speed_limit = np.zeros((max_route_lanes, 1), bool)
+    for i, lane_id in enumerate(route_lanelet_ids[:max_route_lanes]):
+        lanelet = scenario.lanelet_network.find_lanelet_by_id(int(lane_id))
+        if lanelet is None:
+            raise ValueError(f'Route contains missing lanelet {lane_id}')
+        center = resample_polyline(lanelet.center_vertices, points_per_lane)
+        left = resample_polyline(lanelet.left_vertices, points_per_lane)
+        right = resample_polyline(lanelet.right_vertices, points_per_lane)
+        tangent = np.gradient(center, axis=0)
+        route_lanes[i, :, 0:2] = center
+        route_lanes[i, :, 2:4] = tangent
+        route_lanes[i, :, 4:6] = left - center
+        route_lanes[i, :, 6:8] = right - center
+        route_speed_limit[i, 0] = 15.0
+        route_has_speed_limit[i, 0] = True
     return route_lanes, route_speed_limit, route_has_speed_limit
+
+
+def extract_navigation_route(scenario, planning_problem, max_route_lanes=25,
+                             points_per_lane=20, route_lanelet_ids=None):
+    """Encode an ordered route, optionally using previously locked lanelet IDs.
+
+    When route_lanelet_ids is supplied, this function does NOT invoke
+    RoutePlanner and cannot silently return an all-zero route.
+    """
+    if route_lanelet_ids is None:
+        route_lanelet_ids = select_initial_route_lanelet_ids(scenario, planning_problem)
+    ids = list(route_lanelet_ids)
+    if not ids:
+        raise ValueError('Refusing to encode an empty navigation route')
+    tensors = _lanelet_route_tensors(scenario, ids, max_route_lanes, points_per_lane)
+    print(f'[ROUTE] Actual lanelets: {len(ids)}, encoded: {min(len(ids),max_route_lanes)}, '
+          f'padding: {max(0,max_route_lanes-len(ids))}')
+    print(f'[ROUTE] Lanelet IDs: {ids}')
+    return tensors
+
+
+def route_remaining_ids(scenario, locked_ids, position, previous_index=0):
+    """Keep the original branch; advance only as ego progresses along it.
+
+    A nearby parallel or intersecting lanelet must not change the route.
+    Monotonic index prevents jumping backward after an intersection.
+    """
+    ids = list(locked_ids)
+    if not ids:
+        raise ValueError('Locked route is empty')
+    p = np.asarray(position, float)
+    start = min(max(0, int(previous_index)), len(ids)-1)
+    distances = []
+    for i in range(start, len(ids)):
+        lanelet = scenario.lanelet_network.find_lanelet_by_id(int(ids[i]))
+        if lanelet is None:
+            continue
+        points = np.asarray(lanelet.center_vertices, float)
+        distances.append((float(np.min(np.linalg.norm(points-p, axis=1))), i))
+    if not distances:
+        raise ValueError('No valid lanelets remain on the locked route')
+    best_distance, best_idx = min(distances)
+    # Avoid advancing onto a distant downstream lanelet at an intersection.
+    if best_distance > 12.0:
+        best_idx = start
+    return ids[best_idx:], best_idx
+
 
 def extract_ego_pose(planning_problem):
     """Extracts [x, y, cos(yaw), sin(yaw)] to use ONLY for coordinate rotation."""
