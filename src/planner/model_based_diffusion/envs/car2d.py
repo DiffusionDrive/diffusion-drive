@@ -109,6 +109,8 @@ class Car2d:
         self.rew_xref = jax.vmap(self.get_reward)(self.xref).mean()
         self.dynamic_obstacles = jnp.zeros((self.H, 1, 3), dtype=jnp.float32)
         self.dynamic_valid = jnp.zeros((self.H, 1), dtype=bool)
+        self.route_curvature = jnp.zeros((max(self.H - 1, 1),))
+        self.route_half_width = jnp.full((max(self.H - 1, 1),), 2.0)
 
     def reset(self, rng: jax.Array):
         """Resets the environment to an initial state."""
@@ -150,27 +152,60 @@ class Car2d:
         )
 
     @partial(jax.jit, static_argnums=(0,))
+    def route_metrics(self, xs):
+        """Project positions to ordered centerline segments: lateral error, progress."""
+        p = xs[:, :2]
+        a = self.xref[:-1, :2]
+        b = self.xref[1:, :2]
+        v = b - a
+        lengths2 = jnp.maximum(jnp.sum(v * v, axis=1), 1e-8)
+        fraction = jnp.clip(jnp.sum((p[:, None, :] - a[None, :, :]) * v[None, :, :], axis=-1) / lengths2[None, :], 0., 1.)
+        projected = a[None, :, :] + fraction[..., None] * v[None, :, :]
+        squared = jnp.sum((p[:, None, :] - projected) ** 2, axis=-1)
+        nearest = jnp.argmin(squared, axis=1)
+        lateral_sq = jnp.min(squared, axis=1)
+        lengths = jnp.sqrt(lengths2)
+        arc = jnp.concatenate([jnp.zeros((1,)), jnp.cumsum(lengths)])
+        progress = jnp.take_along_axis(
+            arc[:-1][None, :] + fraction * lengths[None, :],
+            nearest[:, None], axis=1
+        )[:, 0]
+        return lateral_sq, progress, arc[-1]
+
+    @partial(jax.jit, static_argnums=(0,))
+    def curvature_reference_costs(self, xs):
+        """Spatially indexed speed, heading, and road-tube costs.
+
+        Uses nearest route segments. Unlike lookahead steering, this does not
+        introduce an additional direction target that can conflict at turns.
+        """
+        p = xs[:, :2]
+        a = self.xref[:-1, :2]
+        b = self.xref[1:, :2]
+        seg = b - a
+        denom = jnp.maximum(jnp.sum(seg * seg, axis=1), 1e-8)
+        frac = jnp.clip(
+            jnp.sum((p[:, None, :] - a[None, :, :]) * seg[None, :, :], axis=-1)
+            / denom[None, :], 0.0, 1.0
+        )
+        proj = a[None, :, :] + frac[..., None] * seg[None, :, :]
+        d2 = jnp.sum((p[:, None, :] - proj) ** 2, axis=-1)
+        idx = jnp.argmin(d2, axis=1)
+        tangent = jnp.arctan2(seg[:, 1], seg[:, 0])
+        # Avoid forcing a heading when the car is fully stopped.
+        moving = jnp.clip(xs[:, 3] / 1.5, 0.0, 1.0)
+        heading = jnp.mean(moving * (1.0 - jnp.cos(xs[:, 2] - tangent[idx])))
+        desired_speed = self.xref[:-1, 3][idx]
+        # Only penalize exceeding the curvature/braking envelope.
+        speed = jnp.mean(jnp.maximum(xs[:, 3] - desired_speed, 0.0) ** 2)
+        available = jnp.maximum(self.route_half_width[idx] - 1.0 - 0.15, 0.0)
+        tube = jnp.mean(jnp.maximum(jnp.sqrt(jnp.min(d2, axis=1) + 1e-8) - available, 0.0) ** 2)
+        return heading, speed, tube
+
+    @partial(jax.jit, static_argnums=(0,))
     def eval_xref_logpd(self, xs):
-        """
-        Spatial route-following cost.
-
-        xs:   (H, 4) planned vehicle states
-        xref: (H, 4) reference centerline states
-        """
-        ego_xy = xs[:, :2]
-        ref_xy = self.xref[:, :2]
-
-        # Pairwise squared distances: (H, H)
-        diff = ego_xy[:, None, :] - ref_xy[None, :, :]
-        dist_sq = jnp.sum(diff ** 2, axis=-1)
-
-        # Nearest centerline point for every ego position
-        lateral_error_sq = jnp.min(dist_sq, axis=1)
-
-        # Penalize deviations from the centerline
-        centerline_cost = jnp.mean(lateral_error_sq)
-
-        return -centerline_cost
+        lateral_sq, _, _ = self.route_metrics(xs)
+        return -jnp.mean(lateral_sq)
 
     @partial(jax.jit, static_argnums=(0,))
     def dynamic_safety_cost(self, xs):

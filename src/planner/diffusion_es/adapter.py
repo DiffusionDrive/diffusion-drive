@@ -30,140 +30,112 @@ def resample_polyline(polyline, num_points=20):
         np.interp(targets, cumulative, points[:, 1])
     ], axis=-1).astype(np.float32)
 
-def extract_vector_map(scenario, planning_problem):
+def extract_vector_map(scenario, planning_problem, time_step=0, route_path_override=None, return_route=False):
     points_per_element = 20
     ego_pos = planning_problem.initial_state.position
     ego_yaw = planning_problem.initial_state.orientation
     ego_dir = np.array([np.cos(ego_yaw), np.sin(ego_yaw)])
 
-    # 1. Identify start lanelet best aligned with Ego heading
-    ego_lanelets = scenario.lanelet_network.find_lanelet_by_position([ego_pos])[0]
-    best_start_id = None
-    min_angle_diff = float('inf')
-
-    for l_id in ego_lanelets:
-        let = scenario.lanelet_network.find_lanelet_by_id(l_id)
-        if let is not None and len(let.center_vertices) >= 2:
-            vec = let.center_vertices[1] - let.center_vertices[0]
-            lane_yaw = np.arctan2(vec[1], vec[0])
-            angle_diff = np.abs(np.arctan2(np.sin(lane_yaw - ego_yaw), np.cos(lane_yaw - ego_yaw)))
-            if angle_diff < min_angle_diff:
-                min_angle_diff = angle_diff
-                best_start_id = l_id
-
-    if best_start_id is None and ego_lanelets:
-        best_start_id = ego_lanelets[0]
-
-    # 2. Extract goal shape and all intersecting lanelets
-    goal_state = planning_problem.goal.state_list[0]
-    goal_shape = goal_state.position
-
-    raw_goal_lanelets = set()
-    if hasattr(goal_shape, 'shapes'):
-        for shape in goal_shape.shapes:
-            raw_goal_lanelets.update(scenario.lanelet_network.find_lanelet_by_shape(shape))
+    if route_path_override is not None:
+        route_path = list(route_path_override)
+        if not route_path:
+            raise ValueError('route_path_override cannot be empty')
+        for lanelet_id in route_path:
+            if scenario.lanelet_network.find_lanelet_by_id(lanelet_id) is None:
+                raise ValueError(f'Unknown route lanelet {lanelet_id}')
     else:
-        raw_goal_lanelets.update(scenario.lanelet_network.find_lanelet_by_shape(goal_shape))
+        # 1. Identify start lanelet best aligned with Ego heading
+        ego_lanelets = scenario.lanelet_network.find_lanelet_by_position([ego_pos])[0]
+        best_start_id = None
+        min_angle_diff = float('inf')
 
-    print("\n========== GOAL DIAGNOSTICS ==========")
-    print("Ego position:", ego_pos)
-    print("Ego heading:", ego_yaw)
-    print("Goal shape type:", type(goal_shape).__name__)
-    print("Goal shape center:", getattr(goal_shape, "center", None))
-    print("Raw goal lanelets:", sorted(raw_goal_lanelets))
+        for l_id in ego_lanelets:
+            let = scenario.lanelet_network.find_lanelet_by_id(l_id)
+            if let is not None and len(let.center_vertices) >= 2:
+                vec = let.center_vertices[1] - let.center_vertices[0]
+                lane_yaw = np.arctan2(vec[1], vec[0])
+                angle_diff = np.abs(np.arctan2(np.sin(lane_yaw - ego_yaw), np.cos(lane_yaw - ego_yaw)))
+                if angle_diff < min_angle_diff:
+                    min_angle_diff = angle_diff
+                    best_start_id = l_id
 
-    for i, goal_state in enumerate(planning_problem.goal.state_list):
-        print(f"\nGoal state {i}:")
-        print("Position:", getattr(goal_state, "position", None))
-        print("Orientation:", getattr(goal_state, "orientation", None))
-        print("Velocity:", getattr(goal_state, "velocity", None))
-        print("Time step:", getattr(goal_state, "time_step", None))
+        if best_start_id is None and ego_lanelets:
+            best_start_id = ego_lanelets[0]
 
-    print("======================================\n")
+        # 2. Extract goal shape and all intersecting lanelets
+        goal_state = planning_problem.goal.state_list[0]
+        goal_shape = goal_state.position
 
-    # 3. Select single target lanelet aligned with Ego heading & furthest forward
-    best_goal_id = None
-    max_forward_dist = -float('inf')
+        raw_goal_lanelets = set()
+        if hasattr(goal_shape, 'shapes'):
+            for shape in goal_shape.shapes:
+                raw_goal_lanelets.update(scenario.lanelet_network.find_lanelet_by_shape(shape))
+        else:
+            raw_goal_lanelets.update(scenario.lanelet_network.find_lanelet_by_shape(goal_shape))
 
-    for g_id in raw_goal_lanelets:
-        g_let = scenario.lanelet_network.find_lanelet_by_id(g_id)
-        if g_let is not None and len(g_let.center_vertices) >= 2:
-            vec = g_let.center_vertices[-1] - g_let.center_vertices[0]
-            g_yaw = np.arctan2(vec[1], vec[0])
-            angle_diff = np.abs(np.arctan2(np.sin(g_yaw - ego_yaw), np.cos(g_yaw - ego_yaw)))
+        print("\n========== GOAL DIAGNOSTICS ==========")
+        print("Ego position:", ego_pos)
+        print("Ego heading:", ego_yaw)
+        print("Goal shape type:", type(goal_shape).__name__)
+        print("Goal shape center:", getattr(goal_shape, "center", None))
+        print("Raw goal lanelets:", sorted(raw_goal_lanelets))
 
-            # Keep only lanelets within 45 degrees of Ego heading
-            if angle_diff < np.pi / 4:
-                lane_center = np.mean(g_let.center_vertices, axis=0)
-                forward_dist = np.dot(lane_center - ego_pos, ego_dir)
-                if forward_dist > max_forward_dist:
-                    max_forward_dist = forward_dist
-                    best_goal_id = g_id
+        for i, goal_state in enumerate(planning_problem.goal.state_list):
+            print(f"\nGoal state {i}:")
+            print("Position:", getattr(goal_state, "position", None))
+            print("Orientation:", getattr(goal_state, "orientation", None))
+            print("Velocity:", getattr(goal_state, "velocity", None))
+            print("Time step:", getattr(goal_state, "time_step", None))
 
-    if best_goal_id is None and raw_goal_lanelets:
-        best_goal_id = list(raw_goal_lanelets)[0]
+        print("======================================\n")
 
-    # 3 and 4. Find a reachable goal lanelet using directed BFS
-    from collections import deque
+        # Choose a route to a goal-intersecting lanelet, preferring goal-region
+        # progress rather than the first intersection (which can be the start).
+        from collections import deque
+        goal_parts = list(goal_shape.shapes) if hasattr(goal_shape, 'shapes') else [goal_shape]
+        goal_points = []
+        for shape in goal_parts:
+            if hasattr(shape, 'vertices'):
+                goal_points.extend(np.asarray(shape.vertices, dtype=float))
+            elif hasattr(shape, 'center'):
+                goal_points.append(np.asarray(shape.center, dtype=float))
+        if not goal_points:
+            raise RuntimeError('Goal region has no supported geometry')
+        goal_center = np.mean(np.asarray(goal_points), axis=0)
 
-    route_path = []
-    best_goal_id = None
-
-    if best_start_id is not None and raw_goal_lanelets:
+        if best_start_id is None:
+            raise RuntimeError('Could not locate starting lanelet')
         queue = deque([[best_start_id]])
         visited = {best_start_id}
-
+        possible_paths = []
         while queue:
             path = queue.popleft()
-            current_id = path[-1]
-
-            if current_id in raw_goal_lanelets:
-                route_path = path
-                best_goal_id = current_id
-                break
-
-            lanelet = scenario.lanelet_network.find_lanelet_by_id(
-                current_id
-            )
-
+            current = path[-1]
+            lanelet = scenario.lanelet_network.find_lanelet_by_id(current)
             if lanelet is None:
                 continue
+            if current in raw_goal_lanelets:
+                possible_paths.append(path)
+            if len(path) >= 15:
+                continue
+            for successor in lanelet.successor:
+                if successor not in visited:
+                    visited.add(successor)
+                    queue.append(path + [successor])
+        if not possible_paths:
+            raise RuntimeError('No successor-connected goal route')
 
-            for successor_id in lanelet.successor:
-                if successor_id not in visited:
-                    visited.add(successor_id)
-                    queue.append(path + [successor_id])
+        def route_quality(path):
+            lanelet = scenario.lanelet_network.find_lanelet_by_id(path[-1])
+            pts = np.asarray(lanelet.center_vertices)
+            goal_distance = np.min(np.linalg.norm(pts - goal_center, axis=1))
+            # Favor paths whose final lanelet approaches the actual goal center.
+            return goal_distance + 0.1 * len(path)
 
-    if not route_path:
-        raise RuntimeError(
-            "No successor-connected route found from ego "
-            f"lanelet {best_start_id} to goal lanelets "
-            f"{sorted(raw_goal_lanelets)}"
-        )
-
-    print("[ROUTE] Start lanelet:", best_start_id)
-    print("[ROUTE] Goal lanelet:", best_goal_id)
-    print("[ROUTE] Lanelet sequence:", route_path)
-
-    print("\n========== ROUTE DIAGNOSTICS ==========")
-    print("Start lanelet:", best_start_id)
-    print("Goal lanelet:", best_goal_id)
-    print("Route path:", route_path)
-
-    for lanelet_id in route_path:
-        lanelet = scenario.lanelet_network.find_lanelet_by_id(
-            lanelet_id
-        )
-
-        if lanelet is not None:
-            print(
-                f"Lanelet {lanelet_id}: "
-                f"successors={lanelet.successor}, "
-                f"start={lanelet.center_vertices[0]}, "
-                f"end={lanelet.center_vertices[-1]}"
-            )
-
-    print("=======================================\n")
+        route_path = min(possible_paths, key=route_quality)
+        best_goal_id = route_path[-1]
+        print('[ROUTE] Start:', best_start_id, 'Goal:', best_goal_id,
+              'Path:', route_path)
 
     coords_dict = {
         'LANE': np.zeros((1, 30, points_per_element, 2), dtype=np.float32),
@@ -186,7 +158,7 @@ def extract_vector_map(scenario, planning_problem):
         if let.traffic_lights:
             tl = scenario.lanelet_network.find_traffic_light_by_id(list(let.traffic_lights)[0])
             if tl is not None:
-                state = tl.get_state_at_time_step(0)
+                state = tl.get_state_at_time_step(time_step)
                 if state == TrafficLightState.GREEN: tl_state_array = [1.0, 0.0, 0.0, 0.0]
                 elif state in [TrafficLightState.YELLOW, TrafficLightState.RED_YELLOW]: tl_state_array = [0.0, 1.0, 0.0, 0.0]
                 elif state == TrafficLightState.RED: tl_state_array = [0.0, 0.0, 1.0, 0.0]
@@ -241,7 +213,10 @@ def extract_vector_map(scenario, planning_problem):
             avails_dict['CROSSWALK'][0, counters['CROSSWALK']] = True
             counters['CROSSWALK'] += 1
 
-    return {k: torch.tensor(v) for k, v in coords_dict.items()}, {k: torch.tensor(v) for k, v in avails_dict.items()}, {k: torch.tensor(v) for k, v in tl_dict.items()}
+    result = ({k: torch.tensor(v) for k, v in coords_dict.items()},
+              {k: torch.tensor(v) for k, v in avails_dict.items()},
+              {k: torch.tensor(v) for k, v in tl_dict.items()})
+    return (*result, list(route_path)) if return_route else result
 
 def extract_kinematics(state) -> np.ndarray:
     x, y = state.position
@@ -265,7 +240,6 @@ def extract_ego_history(planning_problem) -> torch.Tensor:
 
     history_times = np.linspace(-1.5, 0.0, 5)
     for i, time_offset in enumerate(history_times):
-        time_offset = (i - 4) * dt
         history[0, i, 0] = x + (v * np.cos(yaw) * time_offset)
         history[0, i, 1] = y + (v * np.sin(yaw) * time_offset)
         history[0, i, 2] = yaw

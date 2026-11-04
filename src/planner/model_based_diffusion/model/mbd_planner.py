@@ -155,14 +155,6 @@ def run_diffusion(args: Args, env=None):
             collisions > 0, axis=1
         ).astype(jnp.float32)
 
-        # Route guidance
-        if args.enable_demo:
-            route_cost = -jax.vmap(
-                env.eval_xref_logpd
-            )(qs)
-        else:
-            route_cost = jnp.zeros_like(terminal_distance)
-
         # Single consistent reward
         rews = (
                 0.2 * rewss.mean(axis=-1)
@@ -173,7 +165,28 @@ def run_diffusion(args: Args, env=None):
                 - collision_cost
                 - 50.0 * dynamic_cost
         )
-        rew_std = rews.std()
+        # Ordered route progress and spatial lane tracking.
+        # Penalize backward movement, stopping short, and leaving the route.
+        if args.enable_demo:
+            lateral_sq, progress, total_length = jax.vmap(env.route_metrics)(qs)
+            route_remaining = jnp.maximum(total_length - progress[:, -1], 0.0)
+            backwards = jnp.maximum(progress[:, :-1] - progress[:, 1:], 0.0)
+            rews = (rews
+                    - 5.0 * route_remaining
+                    - 3.0 * jnp.mean(lateral_sq, axis=1)
+                    - 10.0 * jnp.mean(backwards ** 2, axis=1))
+        # Curvature-aware speed envelope, mild heading alignment, and
+        # soft road-tube cost. Keep route-progress guidance from the baseline.
+        # Do not reintroduce the lookahead-heading penalty.
+        if args.enable_demo:
+            track_heading, curve_speed, road_tube = jax.vmap(
+                env.curvature_reference_costs
+            )(qs)
+            rews = (rews
+                    - 2.0 * track_heading
+                    - 3.0 * curve_speed
+                    - 8.0 * road_tube)
+
         # Spatial centerline guidance
         if args.enable_demo:
             centerline_scores = jax.vmap(
@@ -182,8 +195,11 @@ def run_diffusion(args: Args, env=None):
         else:
             centerline_scores = jnp.zeros_like(rews)
 
-        # Combine lane-centering with the existing objective
-        rews = rews + 2.0 * centerline_scores
+        # Stronger spatial centerline guidance (previously 2.0).
+        # Keep obstacle, road-tube, progress, and terminal-stop weights unchanged
+        # so this run isolates the effect of lane centering.
+        CENTERLINE_WEIGHT = 20.0
+        rews = rews + CENTERLINE_WEIGHT * centerline_scores
 
         # Normalize the combined reward
         rew_mean = jnp.mean(rews)

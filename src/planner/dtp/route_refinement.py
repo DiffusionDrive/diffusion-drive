@@ -36,15 +36,16 @@ def refine_route_candidate(world, current, initial_yaw, route,
     count = min(len(original), int(horizon))
     # Retry progressively weaker corrections. Never return an unchecked path.
     # The first successful correction retains the strongest route guidance.
-    for trial_strength in (strength, strength * 0.65, strength * 0.35,
-                           strength * 0.15):
+    for trial_strength in (strength, strength * 0.75, strength * 0.50,
+                           strength * 0.25, strength * 0.10, strength * 0.05):
         out = original.copy()
         for i in range(count):
             p = original[i]
             station = route.project(Point(float(p[0]), float(p[1])))
             q = route.interpolate(station)
             correction = np.array([q.x, q.y]) - p
-            ramp = min(1.0, (i + 1) / 7.0)
+            # Gradually introduce lateral correction to avoid a sudden first-step turn.
+            ramp = min(1.0, ((i + 1) / 10.0) ** 2)
             offset = correction * (trial_strength * ramp)
             shift = np.linalg.norm(offset)
             if shift > max_lateral_shift:

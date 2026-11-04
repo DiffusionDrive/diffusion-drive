@@ -59,7 +59,7 @@ class DiffusionPlannerNode:
                     if key in saved_args:
                         setattr(self.config, key, saved_args[key])
 
-        self.config.guidance_fn = None # GuidanceWrapper()
+        self.config.guidance_fn = GuidanceWrapper(route_weight=0.15, boundary_weight=0.10)
         self.model = Diffusion_Planner(self.config).to(self.device)
 
         if checkpoint_path:

@@ -1,5 +1,6 @@
 import os
 import glob
+import time
 import numpy as np
 import pytest
 import matplotlib.pyplot as plt
@@ -12,7 +13,7 @@ from src.planner.model_based_diffusion.adapter import ModelBasedDiffusionCommonR
 
 # Project directories
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, ".."))
+PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../"))
 
 SCENARIO_DIR = os.path.join(PROJECT_ROOT, "data", "scenarios")
 PLOT_DIR = os.path.join(PROJECT_ROOT, "plots", "mbd")
@@ -31,12 +32,26 @@ if not SCENARIO_FILES:
     )
 
 
+@pytest.fixture(scope="session")
+def latency_results():
+    results = []
+    yield results
+    if results:
+        values = [x['latency'] for x in results]
+        print("\n========== MBD PER-CYCLE LATENCY SUMMARY ==========")
+        for x in results:
+            print(f"{x['scenario']} | cycle {x['cycle']:03d}: {x['latency']:.3f} s")
+        print(f"Average across {len(values)} cycles: {np.mean(values):.3f} s")
+        print(f"Median: {np.median(values):.3f} s | Min: {min(values):.3f} s | Max: {max(values):.3f} s")
+        print("Includes setup, compilation and optimization per cycle; first cycle may be cold.")
+
+
 @pytest.mark.parametrize(
     "scenario_path",
     SCENARIO_FILES,
     ids=lambda path: os.path.splitext(os.path.basename(path))[0]
 )
-def test_run(scenario_path):
+def test_run(scenario_path, latency_results):
 
     scenario_name = os.path.splitext(
         os.path.basename(scenario_path)
@@ -61,9 +76,35 @@ def test_run(scenario_path):
         diffusion_steps=100
     )
 
-    # 4. Generate Trajectory
-    print("Generating trajectory with Model-Based Diffusion (MBD)...")
-    planned_trajectory = adapter.plan(scenario, planning_problem)
+    # Closed-loop replanning: 60-step optimization horizon, execute 5 steps
+    # (0.5 seconds at scenario.dt=0.1) before replanning.
+    print("Generating receding-horizon MBD trajectory...")
+    planning_error = None
+    try:
+        planned_trajectory = adapter.plan_receding_horizon(
+            scenario, planning_problem,
+            cycle_horizon=60,
+            execute_steps=5,
+            max_cycles=100,
+            lookahead_m=35.0,
+            max_retries=2,
+        )
+    except RuntimeError as exc:
+        planning_error = exc
+        if adapter.trajectory_states is None:
+            raise
+        planned_trajectory = adapter.trajectory_states[:, :2]
+        print(f"Plan rejected, saving diagnostic plot: {exc}")
+    finally:
+        for i, latency in enumerate(getattr(adapter, "cycle_latencies", []), start=1):
+            latency_results.append({
+                "scenario": scenario_name,
+                "cycle": i,
+                "latency": latency,
+            })
+        if getattr(adapter, "cycle_latencies", []):
+            print(f"Average planning latency for {scenario_name}: "
+                  f"{np.mean(adapter.cycle_latencies):.3f} s/cycle")
 
     print(f"Trajectory generated successfully! Shape: {planned_trajectory.shape}")
     print(f"Start pos: {planned_trajectory[0]}, End pos: {planned_trajectory[-1]}")
@@ -87,12 +128,10 @@ def test_run(scenario_path):
         zorder=20
     )
 
-    plt.plot(
-        np.asarray(adapter.env.xref[:, 0]),
-        np.asarray(adapter.env.xref[:, 1]),
-        "g--",
-        label="Reference centerline"
-    )
+    reference = getattr(adapter, "full_reference_path", None)
+    if reference is None:
+        reference = np.asarray(adapter.env.xref[:, :2])
+    plt.plot(reference[:, 0], reference[:, 1], "g--", label="Full reference centerline")
 
     # Save plot using the scenario filename
     plot_path = os.path.join(
@@ -100,6 +139,18 @@ def test_run(scenario_path):
         f"{scenario_name}_trajectory.png"
     )
 
+    # Overlay the same drivable polygon used by the adapter's road validation.
+    drivable = getattr(adapter, "drivable_polygon", None)
+    if drivable is not None:
+        polygons = list(drivable.geoms) if hasattr(drivable, "geoms") else [drivable]
+        for poly in polygons:
+            if poly.geom_type == "Polygon":
+                xy = np.asarray(poly.exterior.coords)
+                plt.plot(xy[:, 0], xy[:, 1], color="purple", alpha=0.35,
+                         linewidth=0.6, zorder=8)
+
+    plt.legend()
+    plt.title(f"MBD - {scenario_name}" + (" (FAILED)" if planning_error else ""))
     plt.savefig(
         plot_path,
         dpi=300,
@@ -108,10 +159,7 @@ def test_run(scenario_path):
 
     print(f"Trajectory plot saved to: {plot_path}")
 
-    plt.legend()
-    plt.title("Model-Based Diffusion (MBD) - CommonRoad")
-    plt.show()
     plt.close()
+    if planning_error is not None:
+        pytest.fail(str(planning_error))
 
-if __name__ == "__main__":
-    test_run()
